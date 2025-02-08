@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Each file gets one 2048-byte block. Each inode is 278 bytes.
+export INODE_SIZE=$((2 + 2 + 4 + 4 + 2 + 8 + 256))
+export FILE_BLOCK_SIZE=2048
+
+eecho() {
+    echo "$@" >&2
+}
+export -f eecho
+

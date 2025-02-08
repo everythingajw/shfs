@@ -1,0 +1,92 @@
+#!/bin/bash
+
+usage() {
+    cat >&2 <<EOF
+usage: $(basename -- ${BASH_SOURCE[0]}) [options] <file>
+
+Create a new shfs at FILE.
+
+Options:
+    -h, --help      Print this usage and exit
+EOF
+}
+
+set -o pipefail
+set -eu
+
+source ./libshfs
+
+if [ "$#" = '0' ]
+then
+    usage
+    exit 1
+fi
+
+for arg in "$@"
+do
+    case "$arg" in
+        -h|--help) usage; exit 0;;
+        *) ;;
+    esac
+done
+
+if [ "$#" != '1' ]
+then
+    eecho "Invalid argument"
+    usage
+    exit 1
+fi
+
+filename="$1"
+
+if [ -z "$filename" ]
+then
+    eecho "Invalid file name"
+    exit 1
+fi
+
+# For now, we'll just say we can have a maximum of 100 files (and thus 100 inodes).
+num_inodes=100
+
+eecho "inodes: $num_inodes"
+eecho "inode size: $INODE_SIZE"
+eecho "file block size: $FILE_BLOCK_SIZE"
+
+inode_blocks_size=$((num_inodes * INODE_SIZE))
+total_file_blocks_size=$((num_inodes * FILE_BLOCK_SIZE))
+total_fs_size=$((inode_blocks_size + total_file_blocks_size))
+
+eecho "total size of inode blocks: $inode_blocks_size"
+eecho "total size of file blocks: $total_file_blocks_size"
+eecho "total filesystem size: $total_fs_size"
+
+# Allocate the file
+rm -f -- "$filename"
+touch -- "$filename"
+fallocate --zero-range --length "$total_fs_size" -- "$filename"
+
+# Allocate the inodes
+alloc_inode() {
+    local inode_num="$1"
+    if [ "$inode_num" -le '0' ]
+    then
+        eecho "Invalid inode number $inode_num"
+        return 1
+    fi
+    local offset="$((INODE_SIZE * (inode_num - 1)))"
+
+    # Convert inode number to bytes
+    local hex="$(printf '%04x' "$inode_num")"
+    local high="${hex:0:2}"
+    local low="${hex:2:2}"
+
+    printf "\x${high}\x${low}" | dd of="$filename" seek="$offset" bs=1 count=2 conv=sparse,notrunc 2>/dev/null
+}
+
+i=1
+while [ "$i" -lt "$num_inodes" ]
+do
+    alloc_inode "$i"
+    i="$((i + 1))"
+done
+
