@@ -1,0 +1,101 @@
+#!/bin/bash
+
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname="shfs-write"
+fi
+
+usage() {
+    cat >&2 <<EOF
+usage: $progname [options] FS [FILE] DEST
+
+Write FILE to DEST on FS.
+
+options:
+    FS            the shfs filesystem file
+    FILE          the file to write to shfs
+    DEST          the name of the file to write
+    -h, --help    print this usage and exit
+
+If FILE is not specified or if file is -, use stdin.
+Warning: when reading from stdin, data may be truncated.
+EOF
+}
+
+source ./libshfs
+set -eu
+
+if [ "$#" = 0 ]
+then
+    usage
+    exit 1
+fi
+
+for arg in "$@"
+do
+    case "$arg" in
+        -h|--help) usage; exit 0;;
+        *) ;;
+    esac
+done
+
+for arg in "$@"
+do
+    case "$arg" in
+        -*) eecho "No such option $arg"; exit 1;;
+        *) ;;
+    esac
+done
+
+filesystem=
+in_file=
+out_file=
+
+if [ "$#" = 2 ]
+then
+    filesystem="$1"
+    in_file=/dev/stdin
+    out_file="$2"
+elif [ "$#" = 3 ]
+then
+    filesystem="$1"
+    in_file="$2"
+    out_file="$3"
+else
+    eecho "Invalid arguments"
+    usage
+    exit 1
+fi
+
+if [[ "$out_file" =~ / ]]
+then
+    eecho "error: invalid file name"
+    exit 1
+fi
+
+# Steps for writing:
+#   1. Find where to write. If the file exists, overwrite; otherwise, create.
+#   2. Seek to that inode's block start
+#   3. Write data
+#   4. Write permissions/user/group if applicable
+#   5. Set file name (if file created)
+#   6. Update modification time
+
+# This is WRONG. Currently this will always allocate an inode for every file.
+# We'll do the right thing later (overwrite if exists), but for now, let's
+# just get these files on this creation I'm calling a filesystem.
+inode_num="$(get_first_free_inode "$filesystem")"
+if [ "$?" = 2 ] || [ -z "$inode_num" ]
+then
+    eecho "error: no space left on device"
+    exit 2
+fi
+
+# Actually write the data to "disk"
+file_data_block_start="$(get_data_start_for_inode "$inode_num")"
+#dd if="$in_file" of="$filesystem" bs=1 count="$FILE_BLOCK_SIZE" skip="$file_data_block_start" 
+bytes_copied="$(fs_write "$filesystem" if="$in_file" bs=1 count="$FILE_BLOCK_SIZE" skip="$file_data_block_start" | tail -n 1 | cut -d ' ' -f 1)"
+
+set_file_length "$filesystem" "$inode_num" "$bytes_copied"
+

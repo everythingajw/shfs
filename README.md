@@ -18,7 +18,11 @@ I have not yet run any performance tests on this, but let's be real here. This w
 
 ## How it works
 
-File metadata is stored at the beginning of the disk.
+Filesystem-wide metadata is stored at offset zero of the entire disk. This includes:
+
+- 2 byte unsigned number of inodes
+
+File metadata (each inode) is after the filesystem-wide metadata.
 
 An inode comprises of several fields:
 
@@ -27,12 +31,13 @@ An inode comprises of several fields:
 - 4 byte unsigned user id
 - 4 byte unsigned group id
 - 2 byte unsigned file length
-- 8 byte signed last modification time
-- 256 byte null-terminated file name (255 "usable bytes")
+- 7 byte signed last modification time
+- 256 byte file name
 
 All fields except for the file name are stored as big-endian integers. File names are just a sequence of null-terminated bytes.
 
 Each file has a maximum size of 2048 bytes. Each file is allocated a 2048-byte block, regardless of file size.
 
-If the first byte of the file name is zero, then that inode is not considered allocated.
+If the first byte of the file name is /, then that inode is not considered allocated. File names cannot contain the null byte.
 
+Why 7 and not 8 bytes for some fields? `printf(1)` can't handle 0xFFFF_FFFF_FFFF_FFFF nicely.

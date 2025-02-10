@@ -1,11 +1,330 @@
 #!/bin/bash
 
-# Each file gets one 2048-byte block. Each inode is 278 bytes.
-export INODE_SIZE=$((2 + 2 + 4 + 4 + 2 + 8 + 256))
+# Size of each field an inode
+export INODE_FIELD_FILE_LENGTH_SIZE=2
+export INODE_FIELD_NAME_SIZE=256
+
+# The entire filesystem has a 2-byte header that stores the number of inodes on the filesystem.
+export FILESYSTEM_HEADER_SIZE=2
+
+# Total size of each inode
+export INODE_SIZE="$((2 + 2 + 4 + 4 + 2 + 7 + 256))"
+
+# Each file gets one 2048-byte block.
 export FILE_BLOCK_SIZE=2048
+
+export FIRST_INODE_NUMBER=1
 
 eecho() {
     echo "$@" >&2
 }
 export -f eecho
 
+hex2decimal() {
+    local n="$1"
+    if [ -z "$n" ]
+    then
+        return 0
+    fi
+    if [[ ! "$n" =~ ^0x ]]
+    then
+        n="0x$n"
+    fi
+    printf "%d" "$n"
+}
+export -f hex2decimal
+
+octal2decimal() {
+    local n="$1"
+    if [ -z "$n" ]
+    then
+        return 0
+    fi
+    if [[ ! "$n" =~ ^0 ]]
+    then
+        n="0$n"
+    fi
+    printf "%d" "$n"
+}
+export -f octal2decimal
+
+_hexdump_plain() {
+    hexdump --format '/1 "%02x"'  # "$@"
+}
+export -f _hexdump_plain
+
+# Gets the address of the beginning of the given inode.
+# This function *only* does math. It doesn't care if the inode number is valid for a particular filesystem.
+_offset_of_inode() {
+    local inode_num="$1"
+    printf "%d" "$((FILESYSTEM_HEADER_SIZE + ((inode_num - 1) * INODE_SIZE)))"
+}
+export -f _offset_of_inode
+
+fs_write() {
+    dd conv=sparse,notrunc of="$1" "$@"
+}
+export -f fs_write
+
+get_num_inodes() {
+    local filesystem="$1"
+    if [ -z "$filesystem" ]
+    then
+        return 1
+    fi
+
+    local n
+    n="$(dd if="$filesystem" bs=1 count=2 2>/dev/null | _hexdump_plain)"
+    hex2decimal "$n"
+}
+export -f get_num_inodes
+
+is_valid_inode_number() {
+    local filesystem="$1"
+    local inode_num="$1"
+    if [ -z "$filesystem" ] || [[ ! "$inode_num" =~ ^[0-9]+$ ]]
+    then
+        return 1
+    fi
+    local total_inodes
+    total_inodes="$(get_num_inodes "$filesystem")"
+
+    if [ "$inode_num" -lt "$FIRST_INODE_NUMBER" ] || [ "$((inode_num - FIRST_INODE_NUMBER))" -ge "$total_inodes" ]
+    then
+        return 1
+    fi
+
+    return 0
+}
+
+is_valid_file_name() {
+    [ -n "$1" ] && [ "${#1}" -le "$INODE_FIELD_NAME_SIZE" ] && ! echo "$1" | grep -qe '/'
+}
+
+get_file_name() {
+    local filesystem="$1"
+    local inode_num="$2"
+    if [ -z "$filesystem" ] || [[ ! "$inode_num" =~ ^[0-9]+$ ]]
+    then
+        return 1
+    fi
+
+    local field_offset="$((2 + 2 + 4 + 4 + 2 + 7))"
+    local total_inodes
+    total_inodes="$(get_num_inodes "$filesystem")"
+    if [ "$((inode_num - FIRST_INODE_NUMBER))" -lt "$FIRST_INODE_NUMBER" ] || [ "$inode_num" -gt "$total_inodes" ]
+    then
+        return 1
+    fi
+
+    # Where this inode starts
+    local inode_offset="$(( FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE) ))"
+    local real_name_offset="$((inode_offset + field_offset))"
+    dd if="$filesystem" bs=1 count="$INODE_FIELD_NAME_SIZE" skip="$real_name_offset" 2>/dev/null | cut -d / -f 1
+}
+export -f get_file_name
+
+# Gets the first free inode on the filesystem.
+# Returns:
+#   0 on success
+#   1 if invalid arguments
+#   2 if no inodes are free
+get_first_free_inode() {
+    local filesystem="$1"
+    if [ -z "$filesystem" ]
+    then
+        return 1
+    fi
+    local i=0
+    local total_inodes
+    total_inodes="$(get_num_inodes "$filesystem")"
+    local filename
+    while [ "$i" -lt "$total_inodes" ]
+    do
+        local real_inode_number="$((i + FIRST_INODE_NUMBER))"
+        filename="$(get_file_name "$filesystem" "$real_inode_number")"
+        if [ -z "$filename" ]
+        then
+            echo "$real_inode_number"
+            return 0
+        fi
+        i="$((i + 1))"
+    done
+
+    # Filesystem is full
+    return 2
+}
+export -f get_first_free_inode
+
+get_file_length() {
+    local filesystem="$1"
+    local inode_num="$2"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    local inode_start_offset="$((FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE)))"
+    local field_offset="$((2 + 2 + 4 + 4))"
+    local real_offset="$((inode_start_offset + field_offset))"
+    hex2decimal "$(dd if="$filesystem" bs=1 count=2 skip="$real_offset" 2>/dev/null | _hexdump_plain)"
+}
+export -f get_file_length
+
+get_data_start_for_inode() {
+    local filesystem="$1"
+    local inode_num="$2"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    local total_inodes
+    total_inodes="$(get_num_inodes "$filesystem")"
+
+    # The first byte of "real data" on the entire disk
+    local disk_data_start="$((FILESYSTEM_HEADER_SIZE + (INODE_SIZE * total_inodes)))"
+
+    # Since data blocks are laid out sequentially, we just have to seek ahead the appropriate number of bytes.
+    # Compute where the target data starts relative to the beginning of the "real data" on the disk.
+    local inode_num_zero="$((inode_num - FIRST_INODE_NUMBER))"
+    local target_data_offset="$((inode_num_zero * FILE_BLOCK_SIZE))"
+
+    echo "$((disk_data_start + target_data_offset))"
+    return 0
+}
+export -f get_data_start_for_inode
+
+set_file_length() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local length="$3"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    if [[ ! "$length" =~ ^[0-9]+$ ]] || [ "$length" -lt 0 ] || [ "$length" -gt "$FILE_BLOCK_SIZE" ]
+    then
+        return 1
+    fi
+
+    local inode_start
+    inode_start="$(_offset_of_inode "$inode_num")"
+    local file_size_start="$((inode_start + 2 + 2 + 4 + 4))"
+
+    local hex="$(printf '%04x' "$length")"
+    local high="${hex:0:2}"
+    local low="${hex:2:2}"
+
+    printf "\x${high}\x${low}" | fs_write "$filesystem" seek="$file_size_start" bs=1 count=2 2>/dev/null
+}
+export -f set_file_length
+
+# Searches the filesystem for a file with the given name.
+# If a file with the requested name is found, its inode number is returned.
+# If no such file can be found, an empty string is returned.
+find_file() {
+    local filesystem="$1"
+    local needle="$2"
+    if [ -z "$filesystem" ] || [ -z "$needle" ]
+    then
+        return 1
+    fi
+
+    local total_inodes
+    total_inodes="$(get_num_inodes "$filesystem")"
+    local i=0
+    while [ "$i" -lt "$total_inodes" ]
+    do
+        local inode_num="$((i + FIRST_INODE_NUMBER))"
+        local curr_filename
+        curr_filename="$(get_file_name "$filesystem" "$inode_num")"
+        if [ "$curr_filename" = "$needle" ]
+        then
+            echo "$inode_num"
+            return 0
+        fi
+        i="$((i + 1))"
+    done
+
+    return 0
+}
+export -f find_file
+
+set_permissions() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local permissions="$3"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    if [ -z "$permissions" ]
+    then
+        permissions="$((0777 & (~ $(umask) ) ))"
+    fi
+
+    if [ "$permissions" -lt 0 ] || [ "$permissions" -gt "$(octal2decimal 0777)" ]
+    then
+        return 1
+    fi
+
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + 2))"
+    local hex
+    hex="$(printf "%04x" "$permissions")"
+    printf "\x${hex:0:2}\x${hex:2:2}" | fs_write "$filesystem" bs=1 count=2 seek="$offset" 2>/dev/null
+}
+
+set_user() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local uid="$3"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    if [ -z "$uid" ]
+    then
+        uid="$(id -u)"
+    fi
+
+    if [ "$uid" -lt 0 ] || [ "$uid" -gt "$(echo '(2^32)-1' | bc)" ]
+    then
+        return 1    
+    fi
+
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + 2 + 2))"
+    hex="$(printf "%08x" "$uid")"
+    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count=2 seek="$offset" 2>/dev/null
+}
+
+set_group() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local gid="$3"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    if [ -z "$gid" ]
+    then
+        gid="$(id -g)"
+    fi
+
+    if [ "$gid" -lt 0 ] || [ "$gid" -gt "$(echo '(2^32)-1' | bc)" ]
+    then
+        return 1    
+    fi
+
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + 2 + 2 + 4))"
+    hex="$(printf "%08x" "$uid")"
+    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count=2 seek="$offset" 2>/dev/null    
+}
