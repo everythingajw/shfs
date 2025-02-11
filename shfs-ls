@@ -57,13 +57,15 @@ ls_inode() {
 
     # I'll tabulate this some other time
     local args=(
+        "$inode_num"
         "$(get_permissions "$filesystem" "$inode_num")"
         "$(get_file_owner "$filesystem" "$inode_num")"
         "$(get_file_group "$filesystem" "$inode_num")"
         "$(get_file_length "$filesystem" "$inode_num")"
+        "$(get_file_name "$filesystem" "$inode_num")"
     )
 
-    printf "%04o %4d %4d %4d %s\n" "${args[@]}"
+    printf "%d %04o %4d %4d %4d %s\n" "${args[@]}"
     return 0
 }
 
@@ -72,4 +74,5 @@ total_inodes="$(get_num_inodes "$filesystem")"
 while [ "$i" -lt "$total_inodes" ]
 do
     ls_inode "$((i + FIRST_INODE_NUMBER))"
+    i="$((i + 1))"
 done
