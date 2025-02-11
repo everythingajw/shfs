@@ -1,0 +1,75 @@
+#!/bin/bash
+
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname="shfs-ls"
+fi
+
+usage() {
+    cat >&2 <<EOF
+usage: $progname FILESYSTEM [options]
+
+List all contents of FILESYSTEM.
+
+Options:
+    -h, --help      Print this usage and exit
+EOF
+}
+
+set -eu
+
+source ./libshfs
+
+if [ "$#" = 0 ]
+then
+    usage
+    exit 1
+fi
+
+for arg in "$@"
+do
+    case "$arg" in
+        -h|--help) usage; exit 0;;
+        *) ;;
+    esac
+done
+
+filesystem="$1"
+
+if [ -z "$filesystem" ] || [[ "$filesystem" =~ ^- ]]
+then
+    eecho "error: missing path to filesystem"
+    exit 1
+fi
+
+ls_inode() {
+    local inode_num="$1"
+    
+    # Test if this inode is allocated first. If not, don't bother doing all the work
+    # to fetch file metadata - it's useless.
+    local file_name
+    file_name="$(get_file_name "$filesystem" "$inode_num")"
+    if [ -z "$file_name" ]
+    then
+        return 0
+    fi
+
+    # I'll tabulate this some other time
+    local args=(
+        "$(get_permissions "$filesystem" "$inode_num")"
+        "$(get_file_owner "$filesystem" "$inode_num")"
+        "$(get_file_group "$filesystem" "$inode_num")"
+        "$(get_file_length "$filesystem" "$inode_num")"
+    )
+
+    printf "%04o %4d %4d %4d %s\n" "${args[@]}"
+    return 0
+}
+
+i=0
+total_inodes="$(get_num_inodes "$filesystem")"
+while [ "$i" -lt "$total_inodes" ]
+do
+    ls_inode "$((i + FIRST_INODE_NUMBER))"
+done
