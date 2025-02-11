@@ -63,7 +63,8 @@ hex2decimal() {
     then
         return 0
     fi
-    if [[ ! "$n" =~ ^0x ]]
+    local slice="${n:0:2}"
+    if [ "${slice,,}"  != '0x' ]
     then
         n="0x$n"
     fi
@@ -102,7 +103,8 @@ qdd() {
 # This function *only* does math. It doesn't care if the inode number is valid for a particular filesystem.
 _offset_of_inode() {
     local inode_num="$1"
-    printf "%d" "$((FILESYSTEM_HEADER_SIZE + ((inode_num - 1) * INODE_SIZE)))"
+    inode_num="$((inode_num - FIRST_INODE_NUMBER))"
+    printf "%d" "$(( FILESYSTEM_HEADER_SIZE + (inode_num * INODE_SIZE) ))"
 }
 export -f _offset_of_inode
 
@@ -126,8 +128,8 @@ export -f get_num_inodes
 
 is_valid_inode_number() {
     local filesystem="$1"
-    local inode_num="$1"
-    if [ -z "$filesystem" ] || [[ ! "$inode_num" =~ ^[0-9]+$ ]]
+    local inode_num="$2"
+    if [ -z "$filesystem" ] || ! [[ "$inode_num" =~ ^[0-9]+$ ]]
     then
         return 1
     fi
@@ -156,7 +158,7 @@ get_file_name() {
 
     local inode_offset="$(( FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE) ))"
     local real_name_offset="$((inode_offset + INODE_FIELD_NAME_OFFSET))"
-    qdd if="$filesystem" bs=1 count="$INODE_FIELD_NAME_SIZE" skip="$real_name_offset" | cut -d / -f 1
+    qdd if="$filesystem" bs=1 count="$INODE_FIELD_NAME_SIZE" skip="$real_name_offset" | cut -d / -f 1 | tr -d '\000'
 }
 export -f get_file_name
 
@@ -176,9 +178,9 @@ set_file_name() {
     fi
 
     local offset
-    offset="$(_offset_of_inode "$filesystem" "$inode_num")"
+    offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_NAME_OFFSET))"
-    fs_write "$filesystem" bs=1 count="${#name}" seek="$offset"
+    printf "%s" "$name" | fs_write "$filesystem" bs=1 count="${#name}" seek="$offset"
 }
 
 # Gets the first free inode on the filesystem.
@@ -202,7 +204,6 @@ get_first_free_inode() {
         filename="$(get_file_name "$filesystem" "$real_inode_number")"
         if [ -z "$filename" ]
         then
-            echo "$real_inode_number"
             return 0
         fi
         i="$((i + 1))"
@@ -224,7 +225,9 @@ get_file_length() {
     local inode_start_offset="$((FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE)))"
     local field_offset="$((2 + 2 + 4 + 4))"
     local real_offset="$((inode_start_offset + field_offset))"
-    hex2decimal "$(qdd if="$filesystem" bs=1 count=2 skip="$real_offset" | _hexdump_plain)"
+    local n
+    n="$(qdd if="$filesystem" bs=1 count=2 skip="$real_offset" | _hexdump_plain)"
+    printf "%d" "$n"
 }
 export -f get_file_length
 
@@ -284,7 +287,6 @@ export -f set_file_length
 find_file() {
     local filesystem="$1"
     local needle="$2"
-    echo "Looking for $needle on $filesystem" >&2
     if [ -z "$filesystem" ] || [ -z "$needle" ]
     then
         return 1
@@ -292,7 +294,6 @@ find_file() {
 
     local total_inodes
     total_inodes="$(get_num_inodes "$filesystem")"
-    echo "inode count: $total_inodes"
     local i=0
     while [ "$i" -lt "$total_inodes" ]
     do
@@ -322,14 +323,18 @@ get_permissions() {
     local offset
     offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_PERMISSIONS_OFFSET))"
-    hex2decimal "$(qdd if="$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" skip="$offset")"
+    hex2decimal "$(qdd if="$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" skip="$offset" | _hexdump_plain)"
 }
 export -f get_permissions
 
 set_permissions() {
     local filesystem="$1"
     local inode_num="$2"
-    local permissions="$3"
+    local permissions=""
+    if [ "$#" -ge 3 ]
+    then
+        permissions="$3"
+    fi
     if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
     then
         return 1
@@ -372,7 +377,11 @@ export -f get_file_owner
 set_file_owner() {
     local filesystem="$1"
     local inode_num="$2"
-    local uid="$3"
+    local uid=""
+    if [ "$#" -ge 3 ]
+    then
+        gid="$3"
+    fi
     if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
     then
         return 1
@@ -400,7 +409,11 @@ export -f set_file_owner
 get_file_group() {
     local filesystem="$1"
     local inode_num="$2"
-    local gid="$3"
+    local gid=""
+    if [ "$#" -ge 3 ]
+    then
+        gid="$3"
+    fi
     if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
     then
         return 1
@@ -436,7 +449,7 @@ set_file_group() {
     offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_GROUP_ID_OFFSET))"
     local hex
-    hex="$(printf "%08x" "$uid")"
+    hex="$(printf "%08x" "$gid")"
     printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_GROUP_ID_SIZE" seek="$offset"
 }
 export -f set_file_group

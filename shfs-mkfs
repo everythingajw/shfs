@@ -82,6 +82,9 @@ alloc_inode() {
     local low="${hex:2:2}"
 
     printf "\x${high}\x${low}" | fs_write "$filename" seek="$offset" bs=1 count=2
+
+    # Set file name to a slash (empty)
+    printf "/" | fs_write "$filename" seek="$((offset + INODE_FIELD_NAME_OFFSET))" bs=1 count=1
 }
 
 i=1
