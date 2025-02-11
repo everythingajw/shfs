@@ -111,7 +111,7 @@ fi
 # Actually write the data to "disk"
 file_data_block_start="$(get_data_start_for_inode "$filesystem" "$inode_num")"
 #dd if="$in_file" of="$filesystem" bs=1 count="$FILE_BLOCK_SIZE" skip="$file_data_block_start" 
-bytes_copied="$(fs_write "$filesystem" if="$in_file" bs=1 count="$FILE_BLOCK_SIZE" skip="$file_data_block_start" | tail -n 1 | cut -d ' ' -f 1)"
+bytes_copied="$(dd of="$filesystem" if="$in_file" bs=1 count="$FILE_BLOCK_SIZE" seek="$file_data_block_start" conv=sparse,notrunc 2>&1 | tail -n 1 | cut -d ' ' -f 1)"
 
 set_file_length "$filesystem" "$inode_num" "$bytes_copied"
 
