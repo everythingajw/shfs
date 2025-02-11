@@ -91,7 +91,7 @@ octal2decimal() {
 export -f octal2decimal
 
 _hexdump_plain() {
-    hexdump --format '/1 "%02x"'  # "$@"
+    hexdump --no-squeezing --format '/1 "%02x"'  # "$@"
 }
 export -f _hexdump_plain
 
