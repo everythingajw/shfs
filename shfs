@@ -1,0 +1,47 @@
+#!/bin/bash
+
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname=shfs
+fi
+
+usage() {
+    cat >&2 <<EOF
+usage: $progname [opts] COMMAND [command-options]
+
+options:
+    opts               options for $progname
+    COMMAND            command to invoke. One of read, write, mkfs
+    command-options    options specific to COMMAND (see also \`shfs COMMAND --help\`)
+
+options for opts:
+    -h, --help    show this help and exit
+    -l, --list    list available subcommands and exit
+EOF
+}
+
+list_subcommands() {
+    find . -type f -mindepth 1 -maxdepth 1 -name 'shfs-*' -printf '%f\n'
+}
+
+for arg in "$@"
+do
+    case "$arg" in
+        -h|--help) usage; exit 0;;
+        -l|--list) list_subcommands; exit 0;;
+        -*) echo "error: unrecognized option $arg" >&2; exit 1;;
+        *) break;;
+    esac
+done
+
+shfs_command="$1"
+shift
+
+if [ -z "$shfs_command" ]
+then
+    echo "error: no command specified" >&2
+    exit 1
+fi
+
+exec "shfs-${shfs_command}" "$@"
