@@ -383,7 +383,7 @@ set_file_owner() {
 
     if [ "$uid" -lt 0 ] || [ "$uid" -gt "$(echo '(2^32)-1' | bc)" ]
     then
-        return 1    
+        return 1
     fi
 
     local offset
@@ -427,7 +427,7 @@ set_file_group() {
 
     if [ "$gid" -lt 0 ] || [ "$gid" -gt "$(echo '(2^32)-1' | bc)" ]
     then
-        return 1    
+        return 1
     fi
 
     local offset
@@ -477,7 +477,7 @@ can_access() {
 
     local file_owner
     file_owner="$(get_file_owner "$filesystem" "$inode_num")"
-    
+
     local mask
 
     # Default to other. We'll get more specific if needed.
@@ -500,7 +500,7 @@ can_access() {
 
         local file_group
         file_group="$(get_file_group "$filesystem" "$inode_num")"
-        
+
         if [ "$gid" = "$file_group" ]
         then
             case "$kind" in
