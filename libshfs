@@ -75,6 +75,7 @@ export -f hex2decimal
 hex2octal() {
     printf "%o" "$(hex2decimal "$1")"
 }
+export -f hex2octal
 
 octal2decimal() {
     local n="$1"
@@ -98,6 +99,7 @@ export -f _hexdump_plain
 qdd() {
     dd status=none "$@"
 }
+export -f qdd
 
 # Gets the address of the beginning of the given inode.
 # This function *only* does math. It doesn't care if the inode number is valid for a particular filesystem.
