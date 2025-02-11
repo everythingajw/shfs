@@ -74,13 +74,14 @@ alloc_inode() {
         return 1
     fi
     local offset="$((INODE_SIZE * (inode_num - 1)))"
+    offset="$((offset + FILESYSTEM_HEADER_SIZE))"
 
     # Convert inode number to bytes
     local hex="$(printf '%04x' "$inode_num")"
     local high="${hex:0:2}"
     local low="${hex:2:2}"
 
-    printf "\x${high}\x${low}" | dd of="$filename" seek="$offset" bs=1 count=2 conv=sparse,notrunc 2>/dev/null
+    printf "\x${high}\x${low}" | fs_write "$filename" seek="$offset" bs=1 count=2
 }
 
 i=1
@@ -89,4 +90,8 @@ do
     alloc_inode "$i"
     i="$((i + 1))"
 done
+
+# Write number of inodes to header
+hex="$(printf "%04x" "$num_inodes")"
+printf "\x${hex:0:2}\x${hex:2:2}" | fs_write "$filename" bs=1 count=2
 

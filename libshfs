@@ -107,7 +107,7 @@ _offset_of_inode() {
 export -f _offset_of_inode
 
 fs_write() {
-    qdd conv=sparse,notrunc of="$1" "$@"
+    qdd conv=sparse,notrunc of="$1" "${@:2}"
 }
 export -f fs_write
 
@@ -284,6 +284,7 @@ export -f set_file_length
 find_file() {
     local filesystem="$1"
     local needle="$2"
+    echo "Looking for $needle on $filesystem" >&2
     if [ -z "$filesystem" ] || [ -z "$needle" ]
     then
         return 1
@@ -291,6 +292,7 @@ find_file() {
 
     local total_inodes
     total_inodes="$(get_num_inodes "$filesystem")"
+    echo "inode count: $total_inodes"
     local i=0
     while [ "$i" -lt "$total_inodes" ]
     do
