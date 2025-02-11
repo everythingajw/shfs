@@ -44,4 +44,4 @@ then
     exit 1
 fi
 
-exec "shfs-${shfs_command}" "$@"
+PATH=".:${PATH}" exec "shfs-${shfs_command}" "$@"
