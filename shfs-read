@@ -1,0 +1,68 @@
+#!/bin/bash
+
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname="shfs-read"
+fi
+
+usage() {
+    cat >&2 <<EOF
+usage: $progname [options] FS FILE
+
+Read FILE on FS.
+
+options:
+    FS            the shfs filesystem file
+    FILE          the file to read from FS
+    -h, --help    print this usage and exit
+
+If FILE is not specified or if file is -, use stdin.
+Warning: when reading from stdin, data may be truncated.
+EOF
+}
+
+source ./libshfs
+set -eu
+
+if [ "$#" = 0 ]
+then
+    usage
+    exit 1
+fi
+
+for arg in "$@"
+do
+    case "$arg" in
+        -h|--help) usage; exit 0;;
+        *) ;;
+    esac
+done
+
+for arg in "$@"
+do
+    case "$arg" in
+        -*) eecho "No such option $arg"; exit 1;;
+        *) ;;
+    esac
+done
+
+filesystem="$1"
+file="$2"
+inode_num="$(find_file "$filesystem" "$file")"
+
+if [ -z "$inode_num" ]
+then
+    eecho "error: no such file $file"
+    exit 1
+fi
+
+if ! can_access "$filesystem" "$inode_num" r
+then
+    eecho "error: insufficient permissions for $file"
+    exit 1
+fi
+
+length="$(get_file_length "$filesystem" "$inode_num")"
+file_data_block_start="$(get_data_start_for_inode "$filesystem" "$inode_num")"
+qdd if="$filesystem" bs=1 count="$length" skip="$file_data_block_start"
