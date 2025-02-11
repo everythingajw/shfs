@@ -229,7 +229,7 @@ get_file_length() {
     local real_offset="$((inode_start_offset + field_offset))"
     local n
     n="$(qdd if="$filesystem" bs=1 count=2 skip="$real_offset" | _hexdump_plain)"
-    printf "%d" "$n"
+    hex2decimal "$n"
 }
 export -f get_file_length
 
