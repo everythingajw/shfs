@@ -47,3 +47,9 @@ If the first byte of the file name is /, then that inode is not considered alloc
 Why 7 and not 8 bytes for some fields? `printf(1)` can't handle 0xFFFF_FFFF_FFFF_FFFF nicely.
 
 Execute permissions are stored, but are totally meaningless.
+
+## License
+
+Wow, you actually want to use this software? I'm legitimately shocked.
+
+This project is licensed under the GNU GPLv3.
