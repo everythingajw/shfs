@@ -2,18 +2,55 @@
 
 # Size of each field an inode
 export INODE_FIELD_FILE_LENGTH_SIZE=2
+export INODE_FIELD_PERMISSIONS_SIZE=2
+export INODE_FIELD_USER_ID_SIZE=4
+export INODE_FIELD_GROUP_ID_SIZE=4
+export INODE_FIELD_LAST_MODIFIED_SIZE=7
 export INODE_FIELD_NAME_SIZE=256
+
+# Offset of each field in an inode
+export INODE_FIELD_FILE_LENGTH_OFFSET=0
+export INODE_FIELD_PERMISSIONS_OFFSET="$INODE_FIELD_FILE_LENGTH_SIZE"
+export INODE_FIELD_USER_ID_OFFSET="$((INODE_FIELD_PERMISSIONS_OFFSET + INODE_FIELD_PERMISSIONS_SIZE))"
+export INODE_FIELD_GROUP_ID_OFFSET="$((INODE_FIELD_USER_ID_OFFSET + INODE_FIELD_USER_ID_SIZE))"
+export INODE_FIELD_LAST_MODIFIED_OFFSET="$((INODE_FIELD_GROUP_ID_OFFSET + INODE_FIELD_GROUP_ID_SIZE))"
+export INODE_FIELD_NAME_OFFSET="$((INODE_FIELD_LAST_MODIFIED_OFFSET + INODE_FIELD_LAST_MODIFIED_SIZE))"
 
 # The entire filesystem has a 2-byte header that stores the number of inodes on the filesystem.
 export FILESYSTEM_HEADER_SIZE=2
 
 # Total size of each inode
-export INODE_SIZE="$((2 + 2 + 4 + 4 + 2 + 7 + 256))"
+export INODE_SIZE="$((INODE_FIELD_FILE_LENGTH_SIZE
+                      + INODE_FIELD_PERMISSIONS_SIZE
+                      + INODE_FIELD_USER_ID_SIZE
+                      + INODE_FIELD_GROUP_ID_SIZE
+                      + INODE_FIELD_LAST_MODIFIED_SIZE
+                      + INODE_FIELD_NAME_SIZE))"
 
 # Each file gets one 2048-byte block.
 export FILE_BLOCK_SIZE=2048
 
 export FIRST_INODE_NUMBER=1
+
+# - 2 byte unsigned inode number
+# - 2 byte unsigned permissions (read, write, execute for user, group, other)
+# - 4 byte unsigned user id
+# - 4 byte unsigned group id
+# - 2 byte unsigned file length
+# - 7 byte signed last modification time
+# - 256 byte file name
+
+export PERMISSIONS_USER_READ="$((0400))"
+export PERMISSIONS_USER_WRITE="$((0200))"
+export PERMISSIONS_USER_EXECUTE="$((0100))"
+
+export PERMISSIONS_GROUP_READ="$((040))"
+export PERMISSIONS_GROUP_WRITE="$((020))"
+export PERMISSIONS_GROUP_EXECUTE="$((010))"
+
+export PERMISSIONS_OTHER_READ="$((04))"
+export PERMISSIONS_OTHER_WRITE="$((02))"
+export PERMISSIONS_OTHER_EXECUTE="$((01))"
 
 eecho() {
     echo "$@" >&2
@@ -33,6 +70,10 @@ hex2decimal() {
     printf "%d" "$n"
 }
 export -f hex2decimal
+
+hex2octal() {
+    printf "%o" "$(hex2decimal "$1")"
+}
 
 octal2decimal() {
     local n="$1"
@@ -104,25 +145,37 @@ is_valid_file_name() {
 get_file_name() {
     local filesystem="$1"
     local inode_num="$2"
-    if [ -z "$filesystem" ] || [[ ! "$inode_num" =~ ^[0-9]+$ ]]
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
     then
         return 1
     fi
 
-    local field_offset="$((2 + 2 + 4 + 4 + 2 + 7))"
-    local total_inodes
-    total_inodes="$(get_num_inodes "$filesystem")"
-    if [ "$((inode_num - FIRST_INODE_NUMBER))" -lt "$FIRST_INODE_NUMBER" ] || [ "$inode_num" -gt "$total_inodes" ]
-    then
-        return 1
-    fi
-
-    # Where this inode starts
     local inode_offset="$(( FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE) ))"
-    local real_name_offset="$((inode_offset + field_offset))"
+    local real_name_offset="$((inode_offset + INODE_FIELD_NAME_OFFSET))"
     dd if="$filesystem" bs=1 count="$INODE_FIELD_NAME_SIZE" skip="$real_name_offset" 2>/dev/null | cut -d / -f 1
 }
 export -f get_file_name
+
+set_file_name() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local name="$3"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num" || ! is_valid_file_name "$name"
+    then
+        return 1
+    fi
+
+    # Need to slash-terminate the name if it's short
+    if [ "${#name}" -lt "$INODE_FIELD_NAME_SIZE" ]
+    then
+        name="${name}/"
+    fi
+
+    local offset
+    offset="$(_offset_of_inode "$filesystem" "$inode_num")"
+    offset="$((offset + INODE_FIELD_NAME_OFFSET))"
+    fs_write "$filesystem" bs=1 count="${#name}" seek="$offset" 2>/dev/null
+}
 
 # Gets the first free inode on the filesystem.
 # Returns:
@@ -252,6 +305,21 @@ find_file() {
 }
 export -f find_file
 
+get_permissions() {
+    local filesystem="$1"
+    local inode_num="$2"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_PERMISSIONS_OFFSET))"
+    hex2decimal "$(dd if="$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" skip="$offset" 2>/dev/null)"
+}
+export -f get_permissions
+
 set_permissions() {
     local filesystem="$1"
     local inode_num="$2"
@@ -273,13 +341,29 @@ set_permissions() {
 
     local offset
     offset="$(_offset_of_inode "$inode_num")"
-    offset="$((offset + 2))"
+    offset="$((offset + INODE_FIELD_PERMISSIONS_OFFSET))"
     local hex
     hex="$(printf "%04x" "$permissions")"
-    printf "\x${hex:0:2}\x${hex:2:2}" | fs_write "$filesystem" bs=1 count=2 seek="$offset" 2>/dev/null
+    printf "\x${hex:0:2}\x${hex:2:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" seek="$offset" 2>/dev/null
 }
+export -f set_permissions
 
-set_user() {
+get_file_owner() {
+    local filesystem="$1"
+    local inode_num="$2"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_USER_ID_OFFSET))"
+    hex2decimal "$(dd if="$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" skip="$offset" 2>/dev/null | _hexdump_plain)"
+}
+export -f get_file_owner
+
+set_file_owner() {
     local filesystem="$1"
     local inode_num="$2"
     local uid="$3"
@@ -298,13 +382,32 @@ set_user() {
         return 1    
     fi
 
+    local offset
     offset="$(_offset_of_inode "$inode_num")"
-    offset="$((offset + 2 + 2))"
+    offset="$((offset + INODE_FIELD_USER_ID_OFFSET))"
+    local hex
     hex="$(printf "%08x" "$uid")"
-    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count=2 seek="$offset" 2>/dev/null
+    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" seek="$offset" 2>/dev/null
 }
+export -f set_file_owner
 
-set_group() {
+get_file_group() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local gid="$3"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_GROUP_ID_OFFSET))"
+    hex2decimal "$(dd if="$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" skip="$offset" 2>/dev/null | _hexdump_plain)"
+}
+export -f get_file_group
+
+set_file_group() {
     local filesystem="$1"
     local inode_num="$2"
     local gid="$3"
@@ -323,8 +426,92 @@ set_group() {
         return 1    
     fi
 
+    local offset
     offset="$(_offset_of_inode "$inode_num")"
-    offset="$((offset + 2 + 2 + 4))"
+    offset="$((offset + INODE_FIELD_GROUP_ID_OFFSET))"
+    local hex
     hex="$(printf "%08x" "$uid")"
-    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count=2 seek="$offset" 2>/dev/null    
+    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_GROUP_ID_SIZE" seek="$offset" 2>/dev/null
 }
+export -f set_file_group
+
+# Tests if a user can access a file.
+#
+# Parameters:
+#  1: filesystem path
+#  2: inode number
+#  3: kind of access: one of "r", "w", "x"
+#
+# Returns 0 if the user can access the file in the given way, 1 otherwise.
+# Returns 2 on invalid parameters.
+can_access() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local kind="$3"
+    kind="${kind,,}"
+
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num" || [[ ! "$kind" =~ ^[rwx]$ ]]
+    then
+        return 2
+    fi
+
+    # We're going to do something here that's not to be expected with this filesystem: consider performance.
+    # Don't get the file owner/group until we actually need it. No need to get group information if the user
+    # permissions match.
+
+    local uid
+    uid="$(id -u)"
+
+    # Root can always do anything
+    if [ "$uid" = 0 ]
+    then
+        return 0
+    fi
+
+    local permissions
+    permissions="$(get_permissions "$filesystem" "$inode_num")"
+
+    local file_owner
+    file_owner="$(get_file_owner "$filesystem" "$inode_num")"
+    
+    local mask
+
+    # Default to other. We'll get more specific if needed.
+    case "$kind" in
+        r) mask="$PERMISSIONS_OTHER_READ";;
+        w) mask="$PERMISSIONS_OTHER_WRITE";;
+        x) mask="$PERMISSIONS_OTHER_EXECUTE";;
+    esac
+
+    if [ "$uid" = "$file_owner" ]
+    then
+        case "$kind" in
+            r) mask="$PERMISSIONS_USER_READ";;
+            w) mask="$PERMISSIONS_USER_WRITE";;
+            x) mask="$PERMISSIONS_USER_EXECUTE";;
+        esac
+    else
+        local gid
+        gid="$(id -g)"
+
+        local file_group
+        file_group="$(get_file_group "$filesystem" "$inode_num")"
+        
+        if [ "$gid" = "$file_group" ]
+        then
+            case "$kind" in
+                r) mask="$PERMISSIONS_GROUP_READ";;
+                w) mask="$PERMISSIONS_GROUP_WRITE";;
+                x) mask="$PERMISSIONS_GROUP_EXECUTE";;
+            esac
+        fi
+    fi
+
+    if [ "$((permissions & mask))" = 0 ]
+    then
+        return 1
+    else
+        return 0
+    fi
+}
+export -f can_access

@@ -10,9 +10,13 @@ I was inspired to write this after watching [this video on filesystems](https://
 
 - Slow!
 - Inefficient
-- Very limiting
+- Limited
 - No directory structure
 - No backward- nor forward-compatibility
+- Questionable error handling
+- Way too many I/O operations for every operations
+- No atomicity
+- No consistency checks
 
 I have not yet run any performance tests on this, but let's be real here. This will never be performant.
 
@@ -41,3 +45,5 @@ Each file has a maximum size of 2048 bytes. Each file is allocated a 2048-byte b
 If the first byte of the file name is /, then that inode is not considered allocated. File names cannot contain the null byte.
 
 Why 7 and not 8 bytes for some fields? `printf(1)` can't handle 0xFFFF_FFFF_FFFF_FFFF nicely.
+
+Execute permissions are stored, but are totally meaningless.

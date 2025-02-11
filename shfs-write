@@ -82,14 +82,28 @@ fi
 #   5. Set file name (if file created)
 #   6. Update modification time
 
-# This is WRONG. Currently this will always allocate an inode for every file.
-# We'll do the right thing later (overwrite if exists), but for now, let's
-# just get these files on this creation I'm calling a filesystem.
-inode_num="$(get_first_free_inode "$filesystem")"
-if [ "$?" = 2 ] || [ -z "$inode_num" ]
+# Try to overwrite a file we currently have
+inode_num="$(find_file "$filesystem" "$out_file")"
+if [ -n "$inode_num" ]
 then
-    eecho "error: no space left on device"
-    exit 2
+    if ! can_access "$filesystem" "$inode_num" w
+    then
+        eecho "error: insufficient permissions for $out_file"
+        exit 2
+    fi
+else
+    inode_num="$(get_first_free_inode "$filesystem")"
+    if [ "$?" = 2 ] || [ -z "$inode_num" ]
+    then
+        eecho "error: no space left on device"
+        exit 2
+    fi
+
+    set_file_name "$filesystem" "$inode_num" "$out_file"
+    set_file_owner "$filesystem" "$inode_num" "$(id -u)"
+    set_file_group "$filesystem" "$inode_num" "$(id -g)"
+    # Don't specify permissions for default
+    set_permissions "$filesystem" "$inode_num"
 fi
 
 # Actually write the data to "disk"
