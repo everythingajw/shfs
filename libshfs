@@ -94,6 +94,10 @@ _hexdump_plain() {
 }
 export -f _hexdump_plain
 
+qdd() {
+    dd status=none "$@"
+}
+
 # Gets the address of the beginning of the given inode.
 # This function *only* does math. It doesn't care if the inode number is valid for a particular filesystem.
 _offset_of_inode() {
@@ -103,7 +107,7 @@ _offset_of_inode() {
 export -f _offset_of_inode
 
 fs_write() {
-    dd conv=sparse,notrunc of="$1" "$@"
+    qdd conv=sparse,notrunc of="$1" "$@"
 }
 export -f fs_write
 
@@ -115,7 +119,7 @@ get_num_inodes() {
     fi
 
     local n
-    n="$(dd if="$filesystem" bs=1 count=2 2>/dev/null | _hexdump_plain)"
+    n="$(qdd if="$filesystem" bs=1 count=2 | _hexdump_plain)"
     hex2decimal "$n"
 }
 export -f get_num_inodes
@@ -152,7 +156,7 @@ get_file_name() {
 
     local inode_offset="$(( FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE) ))"
     local real_name_offset="$((inode_offset + INODE_FIELD_NAME_OFFSET))"
-    dd if="$filesystem" bs=1 count="$INODE_FIELD_NAME_SIZE" skip="$real_name_offset" 2>/dev/null | cut -d / -f 1
+    qdd if="$filesystem" bs=1 count="$INODE_FIELD_NAME_SIZE" skip="$real_name_offset" | cut -d / -f 1
 }
 export -f get_file_name
 
@@ -174,7 +178,7 @@ set_file_name() {
     local offset
     offset="$(_offset_of_inode "$filesystem" "$inode_num")"
     offset="$((offset + INODE_FIELD_NAME_OFFSET))"
-    fs_write "$filesystem" bs=1 count="${#name}" seek="$offset" 2>/dev/null
+    fs_write "$filesystem" bs=1 count="${#name}" seek="$offset"
 }
 
 # Gets the first free inode on the filesystem.
@@ -220,7 +224,7 @@ get_file_length() {
     local inode_start_offset="$((FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE)))"
     local field_offset="$((2 + 2 + 4 + 4))"
     local real_offset="$((inode_start_offset + field_offset))"
-    hex2decimal "$(dd if="$filesystem" bs=1 count=2 skip="$real_offset" 2>/dev/null | _hexdump_plain)"
+    hex2decimal "$(qdd if="$filesystem" bs=1 count=2 skip="$real_offset" | _hexdump_plain)"
 }
 export -f get_file_length
 
@@ -270,7 +274,7 @@ set_file_length() {
     local high="${hex:0:2}"
     local low="${hex:2:2}"
 
-    printf "\x${high}\x${low}" | fs_write "$filesystem" seek="$file_size_start" bs=1 count=2 2>/dev/null
+    printf "\x${high}\x${low}" | fs_write "$filesystem" seek="$file_size_start" bs=1 count=2
 }
 export -f set_file_length
 
@@ -316,7 +320,7 @@ get_permissions() {
     local offset
     offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_PERMISSIONS_OFFSET))"
-    hex2decimal "$(dd if="$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" skip="$offset" 2>/dev/null)"
+    hex2decimal "$(qdd if="$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" skip="$offset")"
 }
 export -f get_permissions
 
@@ -344,7 +348,7 @@ set_permissions() {
     offset="$((offset + INODE_FIELD_PERMISSIONS_OFFSET))"
     local hex
     hex="$(printf "%04x" "$permissions")"
-    printf "\x${hex:0:2}\x${hex:2:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" seek="$offset" 2>/dev/null
+    printf "\x${hex:0:2}\x${hex:2:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" seek="$offset"
 }
 export -f set_permissions
 
@@ -359,7 +363,7 @@ get_file_owner() {
     local offset
     offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_USER_ID_OFFSET))"
-    hex2decimal "$(dd if="$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" skip="$offset" 2>/dev/null | _hexdump_plain)"
+    hex2decimal "$(qdd if="$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" skip="$offset" | _hexdump_plain)"
 }
 export -f get_file_owner
 
@@ -387,7 +391,7 @@ set_file_owner() {
     offset="$((offset + INODE_FIELD_USER_ID_OFFSET))"
     local hex
     hex="$(printf "%08x" "$uid")"
-    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" seek="$offset" 2>/dev/null
+    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" seek="$offset"
 }
 export -f set_file_owner
 
@@ -403,7 +407,7 @@ get_file_group() {
     local offset
     offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_GROUP_ID_OFFSET))"
-    hex2decimal "$(dd if="$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" skip="$offset" 2>/dev/null | _hexdump_plain)"
+    hex2decimal "$(qdd if="$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" skip="$offset" | _hexdump_plain)"
 }
 export -f get_file_group
 
@@ -431,7 +435,7 @@ set_file_group() {
     offset="$((offset + INODE_FIELD_GROUP_ID_OFFSET))"
     local hex
     hex="$(printf "%08x" "$uid")"
-    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_GROUP_ID_SIZE" seek="$offset" 2>/dev/null
+    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_GROUP_ID_SIZE" seek="$offset"
 }
 export -f set_file_group
 
