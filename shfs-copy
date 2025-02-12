@@ -1,0 +1,42 @@
+#!/bin/bash
+
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname="shfs-copy"
+fi
+
+usage() {
+    cat >&2 <<EOF
+usage: $progname [options] FILESYSTEM SOURCE DEST
+
+Copy SOURCE to DEST on FILESYSTEM.
+
+options:
+    -h, --help    print this help and exit
+EOF
+}
+
+source ./libshfs
+set -eu
+
+filesystem="$1"
+source="$2"
+dest="$3"
+
+if [ -z "$filesystem" ]
+then
+    eecho "error: invalid filesystem path $filesystem"
+    exit 1
+fi
+
+for n in "$source" "$dest"
+do
+    if ! is_valid_file_name "$n"
+    then
+        eecho "error: invalid file name $n"
+        exit 1
+    fi
+done
+
+shfs-read "$filesystem" "$source" | shfs-write "$filesystem" - "$dest"
