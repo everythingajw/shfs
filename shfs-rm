@@ -1,0 +1,61 @@
+#!/bin/bash
+
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname="shfs-ls"
+fi
+
+usage() {
+    cat >&2 <<EOF
+usage: $progname [options] FILESYSTEM FILE
+
+Remove FILE from FILESYSTEM.
+
+options:
+    -h, --help    print this help and exit
+EOF
+}
+
+source ./libshfs
+set -eu
+
+for arg in "$@"
+do
+    case "$arg" in
+        -h|--help) usage; exit 0;;
+        *) ;;
+    esac
+done
+
+for arg in "$@"
+do
+    case "$arg" in
+        -*) eecho "error: unrecognized option $arg"; exit 1;;
+        *);;
+    esac
+done
+
+filesystem="$1"
+target="$2"
+
+if [ -z "$filesystem" ]
+then
+    eecho "error: no filesystem specified"
+    exit 1
+fi
+
+if [ -z "$target" ]
+then
+    eecho "error: must specify file to remove"
+    exit 1
+fi
+
+inode_num="$(find_file "$filesystem" "$target")"
+if [ -z "$inode_num" ]
+then
+    eecho "error: no such file $target"
+    exit 1
+fi
+
+deallocate_inode "$filesystem" "$inode_num"

@@ -164,6 +164,20 @@ get_file_name() {
 }
 export -f get_file_name
 
+# Sets the name of a file.
+#
+# Warning: this function assumes all parameters are valid!
+_set_file_name_unchecked() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local name="$3"
+
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_NAME_OFFSET))"
+    printf "%s" "$name" | fs_write "$filesystem" bs=1 count="${#name}" seek="$offset"
+}
+
 set_file_name() {
     local filesystem="$1"
     local inode_num="$2"
@@ -179,11 +193,9 @@ set_file_name() {
         name="${name}/"
     fi
 
-    local offset
-    offset="$(_offset_of_inode "$inode_num")"
-    offset="$((offset + INODE_FIELD_NAME_OFFSET))"
-    printf "%s" "$name" | fs_write "$filesystem" bs=1 count="${#name}" seek="$offset"
+    _set_file_name_unchecked "$filesystem" "$inode_num" "$name"
 }
+export -f set_file_name
 
 # Gets the first free inode on the filesystem.
 # Returns:
@@ -536,3 +548,16 @@ can_access() {
     fi
 }
 export -f can_access
+
+deallocate_inode() {
+    local filesystem="$1"
+    local inode_num="$2"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    # The only thing that indicates an inode is available is if the first character of the filename is a slash.
+    _set_file_name_unchecked "$filesystem" "$inode_num" '/'
+}
+export -f deallocate_inode
