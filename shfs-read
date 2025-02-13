@@ -65,4 +65,19 @@ fi
 
 length="$(get_file_length "$filesystem" "$inode_num")"
 file_data_block_start="$(get_data_start_for_inode "$filesystem" "$inode_num")"
-qdd if="$filesystem" bs=1 count="$length" skip="$file_data_block_start"
+
+# We have the length of the file here in every case, so we can be a little more efficient here
+# by reading more than 1 byte at a time.
+read_block_size=2048
+full_blocks_to_read="$((length / read_block_size))"
+remaining="$((length % read_block_size))"
+
+qdd if="$filesystem" bs="$read_block_size" count="$full_blocks_to_read" skip="$file_data_block_start"
+
+if [ "$remaining" -gt 0 ]
+then
+    # The remaining data (if there is any) starts after the last block read. Integer division
+    # happened above so this not just a simple "undoing" of the division.
+    offset_of_remaining="$(( file_data_block_start + (full_blocks_to_read * read_block_size) ))"
+    qdd if="$filesystem" bs=1 count="$remaining" skip="$offset_of_remaining"
+fi
