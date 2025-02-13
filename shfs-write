@@ -8,9 +8,11 @@ fi
 
 usage() {
     cat >&2 <<EOF
-usage: $progname [options] FS [FILE] DEST
+usage: $progname [options] FS FILE DEST
+   or: $progname [options] FS DEST
 
 Write FILE to DEST on FS.
+In the second form, read from stdin, writing to DEST on FS.
 
 options:
     FS            the shfs filesystem file
@@ -19,7 +21,7 @@ options:
     -h, --help    print this usage and exit
 
 If FILE is not specified or if file is -, use stdin.
-Warning: when reading from stdin, data may be truncated.
+Warning: the input file will be silently truncated to the file block size of the filesystem.
 EOF
 }
 
@@ -86,7 +88,6 @@ fi
 inode_num="$(find_file "$filesystem" "$out_file")"
 if [ -n "$inode_num" ]
 then
-    echo "found inode $inode_num"
     if ! can_access "$filesystem" "$inode_num" w
     then
         eecho "error: insufficient permissions for $out_file"
@@ -111,7 +112,7 @@ fi
 # Actually write the data to "disk"
 file_data_block_start="$(get_data_start_for_inode "$filesystem" "$inode_num")"
 #dd if="$in_file" of="$filesystem" bs=1 count="$FILE_BLOCK_SIZE" skip="$file_data_block_start" 
-bytes_copied="$(dd of="$filesystem" if="$in_file" bs=1 count="$FILE_BLOCK_SIZE" seek="$file_data_block_start" conv=sparse,notrunc 2>&1 | tail -n 1 | cut -d ' ' -f 1)"
+bytes_copied="$(dd of="$filesystem" if="$in_file" bs=1 count="$FILE_BLOCK_SIZE" seek="$file_data_block_start" conv=sparse,notrunc 2>&1 | grep -e 'copied,' | cut -d ' ' -f 1)"
 
 set_file_length "$filesystem" "$inode_num" "$bytes_copied"
 
