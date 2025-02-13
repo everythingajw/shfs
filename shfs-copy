@@ -1,5 +1,7 @@
 #!/bin/bash
 
+this_script="$(realpath -- "${BASH_SOURCE[0]}")"
+program_dir="$(dirname -- "$this_script")"
 progname="$(basename -- "${BASH_SOURCE[0]}")"
 if [ -z "$progname" ]
 then
@@ -17,7 +19,7 @@ options:
 EOF
 }
 
-source ./libshfs
+source "${program_dir}/libshfs"
 set -eu
 
 filesystem="$1"

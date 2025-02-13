@@ -1,5 +1,7 @@
 #!/bin/bash
 
+this_script="$(realpath -- "${BASH_SOURCE[0]}")"
+program_dir="$(dirname -- "$this_script")"
 progname="$(basename -- "${BASH_SOURCE[0]}")"
 if [ -z "$progname" ]
 then
@@ -25,7 +27,7 @@ Warning: the input file will be silently truncated to the file block size of the
 EOF
 }
 
-source ./libshfs
+source "${program_dir}/libshfs"
 set -eu
 
 if [ "$#" = 0 ]

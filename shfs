@@ -12,7 +12,7 @@ usage: $progname [opts] COMMAND [command-options]
 
 options:
     opts               options for $progname
-    COMMAND            command to invoke. One of read, write, mkfs
+    COMMAND            command to invoke (see $progname --list)
     command-options    options specific to COMMAND (see also \`shfs COMMAND --help\`)
 
 options for opts:
@@ -44,4 +44,5 @@ then
     exit 1
 fi
 
-PATH=".:${PATH}" exec "shfs-${shfs_command}" "$@"
+dir="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")"
+PATH="${dir}:${PATH}" exec "shfs-${shfs_command}" "$@"

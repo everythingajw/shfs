@@ -1,8 +1,16 @@
 #!/bin/bash
 
+this_script="$(realpath -- "${BASH_SOURCE[0]}")"
+program_dir="$(dirname -- "$this_script")"
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname="shfs-mkfs"
+fi
+
 usage() {
     cat >&2 <<EOF
-usage: $(basename -- ${BASH_SOURCE[0]}) [options] <file>
+usage: $progname [options] <file>
 
 Create a new shfs at FILE.
 
@@ -13,6 +21,8 @@ Options:
     --allocate-now              Actually allocate all disk space now instead of using a sparse file
 EOF
 }
+
+source "${program_dir}/libshfs"
 
 if [ "$#" = '0' ]
 then
@@ -27,8 +37,6 @@ do
         *) ;;
     esac
 done
-
-source ./libshfs
 
 opt_arg() {
     local opt="$1"
