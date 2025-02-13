@@ -5,7 +5,10 @@ export INODE_FIELD_FILE_LENGTH_SIZE=2
 export INODE_FIELD_PERMISSIONS_SIZE=2
 export INODE_FIELD_USER_ID_SIZE=4
 export INODE_FIELD_GROUP_ID_SIZE=4
-export INODE_FIELD_LAST_MODIFIED_SIZE=7
+
+# Using this particular size here allows for ISO 8601 dates, but with years that are more than 4 digits.
+# See datetime format below.
+export INODE_FIELD_LAST_MODIFIED_SIZE=35
 export INODE_FIELD_NAME_SIZE=256
 
 # Offset of each field in an inode
@@ -16,8 +19,14 @@ export INODE_FIELD_GROUP_ID_OFFSET="$((INODE_FIELD_USER_ID_OFFSET + INODE_FIELD_
 export INODE_FIELD_LAST_MODIFIED_OFFSET="$((INODE_FIELD_GROUP_ID_OFFSET + INODE_FIELD_GROUP_ID_SIZE))"
 export INODE_FIELD_NAME_OFFSET="$((INODE_FIELD_LAST_MODIFIED_OFFSET + INODE_FIELD_LAST_MODIFIED_SIZE))"
 
-# The entire filesystem has a 2-byte header that stores the number of inodes on the filesystem.
-export FILESYSTEM_HEADER_SIZE=2
+export FILESYSTEM_HEADER_NUM_INODES_SIZE=2
+export FILESYSTEM_HEADER_FILE_BLOCK_SIZE=4
+
+export FILESYSTEM_HEADER_NUM_INODES_OFFSET=0
+export FILESYSTEM_HEADER_FILE_BLOCK_OFFSET="$FILESYSTEM_HEADER_NUM_INODES_SIZE"
+
+export FILESYSTEM_HEADER_SIZE="$((FILESYSTEM_HEADER_NUM_INODES_SIZE
+                                  + FILESYSTEM_HEADER_FILE_BLOCK_SIZE))"
 
 # Total size of each inode
 export INODE_SIZE="$((INODE_FIELD_FILE_LENGTH_SIZE
@@ -27,10 +36,26 @@ export INODE_SIZE="$((INODE_FIELD_FILE_LENGTH_SIZE
                       + INODE_FIELD_LAST_MODIFIED_SIZE
                       + INODE_FIELD_NAME_SIZE))"
 
-# Each file gets one 2048-byte block.
+# The offset of the beginning of the first inode relative to the beginning of the disk.
+export FIRST_INODE_OFFSET="$FILESYSTEM_HEADER_SIZE"
+
+export MINIMUM_FILE_BLOCK_SIZE=1
+MAXIMUM_FILE_BLOCK_SIZE="$(eval echo '$(( (1 << (FILESYSTEM_HEADER_FILE_BLOCK_SIZE * 8)) - 1 ))')"
+export MAXIMUM_FILE_BLOCK_SIZE
+
 export FILE_BLOCK_SIZE=2048
 
 export FIRST_INODE_NUMBER=1
+
+# The datetime/timestamp format the filesystem uses.
+# Normally, we'd just store this as a Unix timestamp, but I have found great difficulty in
+# reliably retrieving and converting 64-bit integers in bash and with standard (well, standard
+# enough) tools. So we'll just use ISO 8601, the only real date format.
+#
+# An example:
+#   Given: January 3, 1970 at 15:16:17 with a timezone 5 hours and 30 minutes ahead of UTC
+#   Stored as: 1970-01-03T15:16:17+05:30
+export DATETIME_FORMAT='%Y-%m-%dT%H:%M:%S%:z'
 
 # - 2 byte unsigned inode number
 # - 2 byte unsigned permissions (read, write, execute for user, group, other)
@@ -101,12 +126,82 @@ qdd() {
 }
 export -f qdd
 
+_hex_to_printf_string() {
+    if [ "$#" = 0 ]
+    then
+        return 1
+    fi
+
+    local hex="$1"
+    hex="${hex,,}"
+
+    if [[ "$hex" =~ ^0x ]]
+    then
+        hex="${hex:2}"
+    fi
+
+    if ! [[ "$hex" =~ ^[0-9a-f]+$ ]]
+    then
+        return 1
+    fi
+
+    local len="${#hex}"
+    if [ "$((len % 2))" != 0 ]
+    then
+        hex="0$hex"
+    fi
+
+    local str=""
+    local i=0
+    while [ "$i" -lt "$len" ]
+    do
+        str="${str}\x${hex:$i:2}"
+        i="$((i + 2))"
+    done
+
+    printf "%s" "$str"
+}
+export -f _hex_to_printf_string
+
+# Converts a sequence of hex nibbles to "true bytes".
+printf_hex_bytes() {
+    printf "$(_hex_to_printf_string "$1")"
+}
+export -f printf_hex_bytes
+
+# Converts a decimal number to its underlying bytes.
+printf_decimal_bytes() {
+    local width="$1"
+    local num="$2"
+    if ! [[ "$width" =~ ^[0-9]+$ ]] || ! [[ "$num" =~ ^[0-9]+$ ]]
+    then
+        return 1
+    fi
+
+    # Remove leading zeros or the number will be interpreted as octal
+    num="${num##0*[!1-9]}"
+
+    # And make sure we didn't just delete the whole number
+    if [ -z "$num" ]
+    then
+        num=0
+    fi
+
+    # We're given a size in bytes, but each hex digit is half a byte. So double the total width to get this right.
+    width="$((width * 2))"
+
+    local hex
+    hex="$(printf "%0${width}x" "$num")"
+    printf_hex_bytes "$hex"
+}
+export -f printf_decimal_bytes
+
 # Gets the address of the beginning of the given inode.
 # This function *only* does math. It doesn't care if the inode number is valid for a particular filesystem.
 _offset_of_inode() {
     local inode_num="$1"
     inode_num="$((inode_num - FIRST_INODE_NUMBER))"
-    printf "%d" "$(( FILESYSTEM_HEADER_SIZE + (inode_num * INODE_SIZE) ))"
+    printf "%d" "$(( FIRST_INODE_OFFSET + (inode_num * INODE_SIZE) ))"
 }
 export -f _offset_of_inode
 
@@ -123,10 +218,23 @@ get_num_inodes() {
     fi
 
     local n
-    n="$(qdd if="$filesystem" bs=1 count=2 | _hexdump_plain)"
+    n="$(qdd if="$filesystem" bs=1 count="$FILESYSTEM_HEADER_NUM_INODES_SIZE" skip="$FILESYSTEM_HEADER_NUM_INODES_OFFSET" | _hexdump_plain)"
     hex2decimal "$n"
 }
 export -f get_num_inodes
+
+get_file_block_size() {
+    local filesystem="$1"
+    if [ -z "$filesystem" ]
+    then
+        return 1
+    fi
+
+    local n
+    n="$(qdd if="$filesystem" bs=1 count="$FILESYSTEM_HEADER_FILE_BLOCK_SIZE" skip="$FILESYSTEM_HEADER_FILE_BLOCK_OFFSET" | _hexdump_plain)"
+    hex2decimal "$n"
+}
+export -f get_file_block_size
 
 is_valid_inode_number() {
     local filesystem="$1"
@@ -158,9 +266,10 @@ get_file_name() {
         return 1
     fi
 
-    local inode_offset="$(( FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE) ))"
-    local real_name_offset="$((inode_offset + INODE_FIELD_NAME_OFFSET))"
-    qdd if="$filesystem" bs=1 count="$INODE_FIELD_NAME_SIZE" skip="$real_name_offset" | cut -d / -f 1 | tr -d '\000'
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_NAME_OFFSET))"
+    qdd if="$filesystem" bs=1 count="$INODE_FIELD_NAME_SIZE" skip="$offset" | cut -d / -f 1 | tr -d '\000'
 }
 export -f get_file_name
 
@@ -171,6 +280,12 @@ _set_file_name_unchecked() {
     local filesystem="$1"
     local inode_num="$2"
     local name="$3"
+
+    # Need to slash-terminate the name if it's short
+    if [ "${#name}" -lt "$INODE_FIELD_NAME_SIZE" ]
+    then
+        name="${name}/"
+    fi
 
     local offset
     offset="$(_offset_of_inode "$inode_num")"
@@ -185,12 +300,6 @@ set_file_name() {
     if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num" || ! is_valid_file_name "$name"
     then
         return 1
-    fi
-
-    # Need to slash-terminate the name if it's short
-    if [ "${#name}" -lt "$INODE_FIELD_NAME_SIZE" ]
-    then
-        name="${name}/"
     fi
 
     _set_file_name_unchecked "$filesystem" "$inode_num" "$name"
@@ -218,6 +327,7 @@ get_first_free_inode() {
         filename="$(get_file_name "$filesystem" "$real_inode_number")"
         if [ -z "$filename" ]
         then
+            echo "$real_inode_number"
             return 0
         fi
         i="$((i + 1))"
@@ -236,11 +346,11 @@ get_file_length() {
         return 1
     fi
 
-    local inode_start_offset="$((FILESYSTEM_HEADER_SIZE + ((inode_num - FIRST_INODE_NUMBER) * INODE_SIZE)))"
-    local field_offset="$((2 + 2 + 4 + 4))"
-    local real_offset="$((inode_start_offset + field_offset))"
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_FILE_LENGTH_OFFSET))"
     local n
-    n="$(qdd if="$filesystem" bs=1 count=2 skip="$real_offset" | _hexdump_plain)"
+    n="$(qdd if="$filesystem" bs=1 count="$INODE_FIELD_FILE_LENGTH_SIZE" skip="$offset" | _hexdump_plain)"
     hex2decimal "$n"
 }
 export -f get_file_length
@@ -283,15 +393,11 @@ set_file_length() {
         return 1
     fi
 
-    local inode_start
-    inode_start="$(_offset_of_inode "$inode_num")"
-    local file_size_start="$((inode_start + 2 + 2 + 4 + 4))"
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_FILE_LENGTH_OFFSET))"
 
-    local hex="$(printf '%04x' "$length")"
-    local high="${hex:0:2}"
-    local low="${hex:2:2}"
-
-    printf "\x${high}\x${low}" | fs_write "$filesystem" seek="$file_size_start" bs=1 count=2
+    printf_decimal_bytes "$INODE_FIELD_FILE_LENGTH_SIZE" "$length" | fs_write "$filesystem" seek="$offset" bs=1 count="$INODE_FIELD_FILE_LENGTH_SIZE"
 }
 export -f set_file_length
 
@@ -367,9 +473,7 @@ set_permissions() {
     local offset
     offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_PERMISSIONS_OFFSET))"
-    local hex
-    hex="$(printf "%04x" "$permissions")"
-    printf "\x${hex:0:2}\x${hex:2:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" seek="$offset"
+    printf_decimal_bytes "$INODE_FIELD_PERMISSIONS_SIZE" "$permissions" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_PERMISSIONS_SIZE" seek="$offset"
 }
 export -f set_permissions
 
@@ -394,7 +498,7 @@ set_file_owner() {
     local uid=""
     if [ "$#" -ge 3 ]
     then
-        gid="$3"
+        uid="$3"
     fi
     if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
     then
@@ -414,9 +518,7 @@ set_file_owner() {
     local offset
     offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_USER_ID_OFFSET))"
-    local hex
-    hex="$(printf "%08x" "$uid")"
-    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" seek="$offset"
+    printf_decimal_bytes "$INODE_FIELD_USER_ID_SIZE" "$uid" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_USER_ID_SIZE" seek="$offset"
 }
 export -f set_file_owner
 
@@ -462,9 +564,7 @@ set_file_group() {
     local offset
     offset="$(_offset_of_inode "$inode_num")"
     offset="$((offset + INODE_FIELD_GROUP_ID_OFFSET))"
-    local hex
-    hex="$(printf "%08x" "$gid")"
-    printf "\x${hex:0:2}\x${hex:2:2}\x${hex:4:2}\x${hex:6:2}" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_GROUP_ID_SIZE" seek="$offset"
+    printf_decimal_bytes "$INODE_FIELD_GROUP_ID_SIZE" "$gid" | fs_write "$filesystem" bs=1 count="$INODE_FIELD_GROUP_ID_SIZE" seek="$offset"
 }
 export -f set_file_group
 
@@ -540,12 +640,7 @@ can_access() {
         fi
     fi
 
-    if [ "$((permissions & mask))" = 0 ]
-    then
-        return 1
-    else
-        return 0
-    fi
+    [ "$((permissions & mask))" != 0 ]
 }
 export -f can_access
 
@@ -561,3 +656,52 @@ deallocate_inode() {
     _set_file_name_unchecked "$filesystem" "$inode_num" '/'
 }
 export -f deallocate_inode
+
+get_last_modified_timestamp() {
+    local filesystem="$1"
+    local inode_num="$2"
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num"
+    then
+        return 1
+    fi
+
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_LAST_MODIFIED_OFFSET))"
+    qdd if="$filesystem" bs=1 count="$INODE_FIELD_LAST_MODIFIED_SIZE" skip="$offset" | tr -d '\000'
+}
+export -f get_last_modified_timestamp
+
+set_last_modified_timestamp() {
+    local filesystem="$1"
+    local inode_num="$2"
+    local stamp
+
+    if [ "$#" -ge 3 ]
+    then
+        # Date was provided; format it exactly how we want.
+        stamp="$(date --date="$3" "+$DATETIME_FORMAT" 2> /dev/null)"
+        if [ "$?" != 0 ]
+        then
+            return 1
+        fi
+    else
+        stamp="$(date "+$DATETIME_FORMAT")"
+    fi
+
+    if [ -z "$filesystem" ] || ! is_valid_inode_number "$filesystem" "$inode_num" || [ "${#stamp}" -gt "$INODE_FIELD_LAST_MODIFIED_SIZE" ]
+    then
+        return 1
+    fi
+
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
+    offset="$((offset + INODE_FIELD_LAST_MODIFIED_OFFSET))"
+
+    # We zero the entire field because this field is null-terminated and we don't know how long the current
+    # timestamp is in the field. So it's easiest to just zero it than read, check the length, and zero just
+    # (possibly) a slice of the field instead of the whole thing.
+    fs_write "$filesystem" if=/dev/zero bs=1 count="$INODE_FIELD_LAST_MODIFIED_SIZE"
+    printf "%s" "$stamp" | fs_write "$filesystem" bs=1 count="${#stamp}"
+}
+export -f set_last_modified_timestamp
