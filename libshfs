@@ -712,7 +712,7 @@ set_last_modified_timestamp() {
     # We zero the entire field because this field is null-terminated and we don't know how long the current
     # timestamp is in the field. So it's easiest to just zero it than read, check the length, and zero just
     # (possibly) a slice of the field instead of the whole thing.
-    fs_write "$filesystem" if=/dev/zero bs=1 count="$INODE_FIELD_LAST_MODIFIED_SIZE"
-    printf "%s" "$stamp" | fs_write "$filesystem" bs=1 count="${#stamp}"
+    fs_write "$filesystem" if=/dev/zero count=1 bs="$INODE_FIELD_LAST_MODIFIED_SIZE" seek="${offset}B"
+    printf "%s" "$stamp" | fs_write "$filesystem" count=1 bs="${#stamp}" seek="${offset}B"
 }
 export -f set_last_modified_timestamp
