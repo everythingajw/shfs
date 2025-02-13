@@ -21,7 +21,7 @@ EOF
 
 set -eu
 
-source "${program_dir}/libshfs"
+source "./libshfs"
 
 if [ "$#" = 0 ]
 then
@@ -44,6 +44,8 @@ then
     eecho "error: missing path to filesystem"
     exit 1
 fi
+
+fill_caches "$filesystem"
 
 ls_inode() {
     local inode_num="$1"
@@ -76,5 +78,6 @@ total_inodes="$(get_num_inodes "$filesystem")"
 while [ "$i" -lt "$total_inodes" ]
 do
     ls_inode "$((i + FIRST_INODE_NUMBER))"
+    # echo "tic $CACHE"
     i="$((i + 1))"
 done

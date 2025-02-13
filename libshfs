@@ -213,37 +213,33 @@ fs_write() {
 }
 export -f fs_write
 
-_get_num_inodes__num_inodes_cache=""
-declare -g _get_num_inodes__num_inodes_cache
+
+_get_num_inodes_cache=
 
 get_num_inodes() {
-    if [ -n "${_get_num_inodes__num_inodes_cache}" ]
+    if [ -n "${_get_num_inodes_cache:-}" ]
     then
-        printf "%s" "$_get_num_inodes__num_inodes_cache"
+        printf "%s" "$_get_num_inodes_cache"
         return 0
     fi
 
-    local filesystem="$1"
-    if [ -z "$filesystem" ]
+    if [ -z "$1" ]
     then
         return 1
     fi
 
-    local n
-    n="$(qdd if="$filesystem" bs="$FILESYSTEM_HEADER_NUM_INODES_SIZE" count=1 skip="${FILESYSTEM_HEADER_NUM_INODES_OFFSET}B" | _hexdump_plain)"
-    n="$(hex2decimal "$n")"
-    _get_num_inodes__num_inodes_cache="$n"
-    printf "%s" "$n"
+    _get_num_inodes_cache="$(qdd if="$1" bs="$FILESYSTEM_HEADER_NUM_INODES_SIZE" count=1 skip="${FILESYSTEM_HEADER_NUM_INODES_OFFSET}B" | _hexdump_plain)"
+    _get_num_inodes_cache="$(hex2decimal "$_get_num_inodes_cache")"
+    printf "%s" "$_get_num_inodes_cache"
 }
-export -f get_num_inodes
+# export -f get_num_inodes
 
-_get_file_block_size__file_block_size_cache=''
-declare -g _get_file_block_size__file_block_size_cache
+_get_file_block_size_cache=''
 
 get_file_block_size() {
-    if [ -n "${_get_file_block_size__file_block_size_cache}" ]
+    if [ -n "${_get_file_block_size_cache:-}" ]
     then
-        printf "%s" "$_get_file_block_size__file_block_size_cache"
+        printf "%s" "$_get_file_block_size_cache"
         return 0
     fi
 
@@ -253,11 +249,9 @@ get_file_block_size() {
         return 1
     fi
 
-    local n
-    n="$(qdd if="$filesystem" bs="$FILESYSTEM_HEADER_FILE_BLOCK_SIZE" count=1 skip="${FILESYSTEM_HEADER_FILE_BLOCK_OFFSET}B" | _hexdump_plain)"
-    n="$(hex2decimal "$n")"
-    _get_file_block_size__file_block_size_cache="$n"
-    printf "%s" "$n"
+    _get_file_block_size_cache="$(qdd if="$filesystem" bs="$FILESYSTEM_HEADER_FILE_BLOCK_SIZE" count=1 skip="${FILESYSTEM_HEADER_FILE_BLOCK_OFFSET}B" | _hexdump_plain)"
+    _get_file_block_size_cache="$(hex2decimal "$_get_file_block_size_cache")"
+    printf "%s" "$_get_file_block_size_cache"
 }
 export -f get_file_block_size
 
@@ -271,12 +265,7 @@ is_valid_inode_number() {
     local total_inodes
     total_inodes="$(get_num_inodes "$filesystem")"
 
-    if [ "$inode_num" -lt "$FIRST_INODE_NUMBER" ] || [ "$((inode_num - FIRST_INODE_NUMBER))" -ge "$total_inodes" ]
-    then
-        return 1
-    fi
-
-    return 0
+    [ "$inode_num" -ge "$FIRST_INODE_NUMBER" ] && [ "$((inode_num - FIRST_INODE_NUMBER))" -lt "$total_inodes" ]
 }
 
 is_valid_file_name() {
@@ -738,3 +727,10 @@ set_last_modified_timestamp() {
     printf "%s" "$stamp" | fs_write "$filesystem" count=1 bs="${#stamp}" seek="${offset}B"
 }
 export -f set_last_modified_timestamp
+
+fill_caches() {
+    local filesystem="$1"
+    get_num_inodes "$filesystem" &> /dev/null
+    get_file_block_size "$filesystem" &> /dev/null
+}
+export -f fill_caches
