@@ -391,10 +391,18 @@ set_file_length() {
         return 1
     fi
 
-    if [[ ! "$length" =~ ^[0-9]+$ ]] || [ "$length" -lt 0 ] || [ "$length" -gt "$FILE_BLOCK_SIZE" ]
+    if [[ ! "$length" =~ ^[0-9]+$ ]] || [ "$length" -lt 0 ]
     then
         return 1
     fi
+
+    local block_size
+    block_size="$(get_file_block_size "$filesystem")"
+    if [ "$length" -gt "$block_size" ]
+    then
+        length="$block_size"
+    fi
+
 
     local offset
     offset="$(_offset_of_inode "$inode_num")"
