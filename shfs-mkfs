@@ -7,14 +7,12 @@ usage: $(basename -- ${BASH_SOURCE[0]}) [options] <file>
 Create a new shfs at FILE.
 
 Options:
-    -h, --help      Print this usage and exit
+    -h, --help                  Print this usage and exit
+    -i, --inodes INODES         Set the number of inodes (default 100, max 65535)
+    -b, --file-block-size SIZE  Set the block size in bytes for files (default 2048, max $MAXIMUM_FILE_BLOCK_SIZE)
+    --allocate-now              Actually allocate all disk space now instead of using a sparse file
 EOF
 }
-
-set -o pipefail
-set -eu
-
-source ./libshfs
 
 if [ "$#" = '0' ]
 then
@@ -30,40 +28,103 @@ do
     esac
 done
 
-if [ "$#" != '1' ]
+source ./libshfs
+
+opt_arg() {
+    local opt="$1"
+    local arg="$2"
+    case "$arg" in
+        -*) eecho "error: missing option for $opt"; exit 1;;
+        *) echo "$arg";;
+    esac
+}
+
+num_inodes=100
+file_block_size=2048
+filename=
+allocate_now=f
+
+while [ "$#" -gt 0 ]
+do
+    opt="$1"
+    case "$opt" in
+        -i|--inodes) num_inodes="$(opt_arg "$opt" "$2")"; shift;;
+        -b|--file-block-size) file_block_size="$(opt_arg "$opt" "$2")"; shift;;
+        --allocate-now) allocate_now=t;;
+        -*) eecho "error: invalid option $opt"; exit 1;;
+        *)
+            if [ -n "$filename" ]
+            then
+                eecho "error: exactly one file name required"
+                exit 1
+            fi
+            filename="$1"
+            ;;
+    esac
+    shift
+done
+
+if [ "$num_inodes" -le 0 ]
 then
-    eecho "Invalid argument"
-    usage
+    eecho "error: must have at least 1 inode"
     exit 1
 fi
 
-filename="$1"
+if [ "$num_inodes" -gt 65535 ]
+then
+    eecho "error: too many inodes (maximum 65535)"
+    exit 1
+fi
+
+if [ "$file_block_size" -lt "$MINIMUM_FILE_BLOCK_SIZE" ]
+then
+    eecho "error: file block size must be at least 1"
+    exit 1
+fi
+
+if [ "$file_block_size" -ge "$MAXIMUM_FILE_BLOCK_SIZE" ]
+then
+    eecho "error: file block size cannot exceed $MAXIMUM_FILE_BLOCK_SIZE"
+    exit 1
+fi
 
 if [ -z "$filename" ]
 then
-    eecho "Invalid file name"
+    eecho "error: missing required filename"
     exit 1
 fi
 
-# For now, we'll just say we can have a maximum of 100 files (and thus 100 inodes).
-num_inodes=100
+set -o pipefail
+set -eu
 
-eecho "inodes: $num_inodes"
-eecho "inode size: $INODE_SIZE"
-eecho "file block size: $FILE_BLOCK_SIZE"
+echo "inodes: $num_inodes"
+echo "inode size: $INODE_SIZE"
+echo "file block size: $file_block_size"
 
-inode_blocks_size=$((num_inodes * INODE_SIZE))
-total_file_blocks_size=$((num_inodes * FILE_BLOCK_SIZE))
-total_fs_size=$((inode_blocks_size + total_file_blocks_size))
+inode_blocks_size="$((num_inodes * INODE_SIZE))"
+total_file_blocks_size="$((num_inodes * file_block_size))"
+total_fs_size="$((inode_blocks_size + total_file_blocks_size))"
 
-eecho "total size of inode blocks: $inode_blocks_size"
-eecho "total size of file blocks: $total_file_blocks_size"
-eecho "total filesystem size: $total_fs_size"
+echo "total size of inode blocks: $inode_blocks_size"
+echo "total size of file blocks: $total_file_blocks_size"
+echo "total filesystem size: $total_fs_size"
 
-# Allocate the file
-rm -f -- "$filename"
-touch -- "$filename"
-fallocate --zero-range --length "$total_fs_size" -- "$filename"
+if [ "$allocate_now" = t ]
+then
+    # We definitely want a block size larger than 1 for this write. There's a pretty good
+    # chance we'll end up writing a pretty significant amount of data; using bs=1 will
+    # take a significant amount of time. Write as much as we can with a big block size
+    # and write the remainder with bs=1.
+    dd_block_size=4096
+    blocks_to_write="$((total_fs_size / dd_block_size))"
+    bytes_remaining="$((total_fs_size % dd_block_size))"
+    dd if=/dev/zero of="$filename" bs="$dd_block_size" count="$blocks_to_write" status=none
+    dd if=/dev/zero of="$filename" bs=1 count="$bytes_remaining" conv=notrunc,append status=none
+else
+    rm -f -- "$filename"
+    touch -- "$filename"
+    fallocate --zero-range --length "$total_fs_size" -- "$filename"
+fi
 
 # Allocate the inodes
 alloc_inode() {
@@ -73,28 +134,25 @@ alloc_inode() {
         eecho "Invalid inode number $inode_num"
         return 1
     fi
-    local offset="$((INODE_SIZE * (inode_num - 1)))"
-    offset="$((offset + FILESYSTEM_HEADER_SIZE))"
 
-    # Convert inode number to bytes
-    local hex="$(printf '%04x' "$inode_num")"
-    local high="${hex:0:2}"
-    local low="${hex:2:2}"
+    local offset
+    offset="$(_offset_of_inode "$inode_num")"
 
-    printf "\x${high}\x${low}" | fs_write "$filename" seek="$offset" bs=1 count=2
+    printf_decimal_bytes 2 "$inode_num" | fs_write "$filename" seek="$offset" bs=1 count=2
 
     # Set file name to a slash (empty)
     printf "/" | fs_write "$filename" seek="$((offset + INODE_FIELD_NAME_OFFSET))" bs=1 count=1
 }
 
-i=1
+# Write number of inodes to header
+printf_decimal_bytes "$FILESYSTEM_HEADER_NUM_INODES_SIZE" "$num_inodes" | fs_write "$filename" bs=1 count="$FILESYSTEM_HEADER_NUM_INODES_SIZE"
+
+# Write file block size
+printf_decimal_bytes "$FILESYSTEM_HEADER_FILE_BLOCK_SIZE" "$file_block_size" | fs_write "$filename" bs=1 count="$FILESYSTEM_HEADER_FILE_BLOCK_SIZE" seek="$FILESYSTEM_HEADER_FILE_BLOCK_OFFSET"
+
+i=0
 while [ "$i" -lt "$num_inodes" ]
 do
-    alloc_inode "$i"
+    alloc_inode "$((i + FIRST_INODE_NUMBER))"
     i="$((i + 1))"
 done
-
-# Write number of inodes to header
-hex="$(printf "%04x" "$num_inodes")"
-printf "\x${hex:0:2}\x${hex:2:2}" | fs_write "$filename" bs=1 count=2
-
