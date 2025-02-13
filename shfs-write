@@ -96,7 +96,6 @@ then
         exit 2
     fi
 else
-    echo "inode not found, finding free inode"
     inode_num="$(get_first_free_inode "$filesystem")"
     if [ "$?" = 2 ] || [ -z "$inode_num" ]
     then
