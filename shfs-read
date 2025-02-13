@@ -8,28 +8,20 @@ fi
 
 usage() {
     cat >&2 <<EOF
-usage: $progname [options] FS FILE
+usage: $progname [options] FS FILE...
 
-Read FILE on FS.
+Read one or more FILE(s) on FS.
+The files are concatenated on stdout.
 
 options:
     FS            the shfs filesystem file
-    FILE          the file to read from FS
+    FILEs         the file(s) to read from FS
     -h, --help    print this usage and exit
-
-If FILE is not specified or if file is -, use stdin.
-Warning: when reading from stdin, data may be truncated.
 EOF
 }
 
 source ./libshfs
 set -eu
-
-if [ "$#" = 0 ]
-then
-    usage
-    exit 1
-fi
 
 for arg in "$@"
 do
@@ -47,37 +39,48 @@ do
     esac
 done
 
+if [ "$#" -lt 2 ]
+then
+    eecho "error: must specify filesystem and at least one file to read"
+    exit 1
+fi
+
 filesystem="$1"
-file="$2"
-inode_num="$(find_file "$filesystem" "$file")"
+shift
 
-if [ -z "$inode_num" ]
-then
-    eecho "error: no such file $file"
-    exit 1
-fi
+while [ "$#" -gt 0 ]
+do
+    file="$1"
+    inode_num="$(find_file "$filesystem" "$file")"
 
-if ! can_access "$filesystem" "$inode_num" r
-then
-    eecho "error: insufficient permissions for $file"
-    exit 1
-fi
+    if [ -z "$inode_num" ]
+    then
+        eecho "error: no such file $file"
+    fi
 
-length="$(get_file_length "$filesystem" "$inode_num")"
-file_data_block_start="$(get_data_start_for_inode "$filesystem" "$inode_num")"
+    if ! can_access "$filesystem" "$inode_num" r
+    then
+        eecho "error: insufficient permissions for $file"
+    fi
 
-# We have the length of the file here in every case, so we can be a little more efficient here
-# by reading more than 1 byte at a time.
-read_block_size=2048
-full_blocks_to_read="$((length / read_block_size))"
-remaining="$((length % read_block_size))"
+    length="$(get_file_length "$filesystem" "$inode_num")"
+    file_data_block_start="$(get_data_start_for_inode "$filesystem" "$inode_num")"
 
-qdd if="$filesystem" bs="$read_block_size" count="$full_blocks_to_read" skip="$file_data_block_start"
+    # We have the length of the file here in every case, so we can be a little more efficient here
+    # by reading more than 1 byte at a time.
+    read_block_size=2048
+    full_blocks_to_read="$((length / read_block_size))"
+    remaining="$((length % read_block_size))"
 
-if [ "$remaining" -gt 0 ]
-then
-    # The remaining data (if there is any) starts after the last block read. Integer division
-    # happened above so this not just a simple "undoing" of the division.
-    offset_of_remaining="$(( file_data_block_start + (full_blocks_to_read * read_block_size) ))"
-    qdd if="$filesystem" bs=1 count="$remaining" skip="$offset_of_remaining"
-fi
+    qdd if="$filesystem" bs="$read_block_size" count="$full_blocks_to_read" skip="$file_data_block_start"
+
+    if [ "$remaining" -gt 0 ]
+    then
+        # The remaining data (if there is any) starts after the last block read. Integer division
+        # happened above so this not just a simple "undoing" of the division.
+        offset_of_remaining="$(( file_data_block_start + (full_blocks_to_read * read_block_size) ))"
+        qdd if="$filesystem" bs=1 count="$remaining" skip="$offset_of_remaining"
+    fi
+
+    shift
+done
