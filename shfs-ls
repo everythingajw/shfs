@@ -21,7 +21,7 @@ EOF
 
 set -eu
 
-source "./libshfs"
+source "${program_dir}/libshfs"
 
 if [ "$#" = 0 ]
 then
