@@ -56,9 +56,9 @@ do
             if [ -z "$filesystem" ]
             then
                 filesystem="$arg"
-            elif [ -z "$mode" ]
+            elif [ -z "${mode_raw}" ]
             then
-                mode="$arg"
+                mode_raw="$arg"
             else
                 files+=("$arg")
             fi
@@ -80,34 +80,37 @@ octal_digit_to_rwx() {
 }
 
 octal_mode_to_symbolic() {
-    local octal="${1//0/}"
-    octal="$(printf '%3d' "${octal}")"
+    local octal
+    octal="$(printf '%03d' "$(echo "$1" | sed 's/^0*//')")"
 
-    local sep=''
     local digit="${octal:0:1}"
-
-    if [ "$digit" != '0' ]
+    if [ "$digit" = '0' ]
     then
+        mode="u-rwx"
+    else
         mode="u=$(octal_digit_to_rwx "$digit")"
-        sep=,
     fi
 
-    digit="${digit:1:1}"
-    if [ "$digit" != '0' ]
+    digit="${octal:1:1}"
+    if [ "$digit" = '0' ]
     then
-        mode="${mode}${sep}g=$(octal_digit_to_rwx "$digit")"
-        sep=,
+        mode="${mode},g-rwx"
+    else
+        mode="${mode},g=$(octal_digit_to_rwx "$digit")"
     fi
 
-    digit="${digit:2:1}"
-    if [ "$digit" != '0' ]
+    digit="${octal:2:1}"
+    if [ "$digit" = '0' ]
     then
-        mode="${mode}${sep}o=$(octal_digit_to_rwx "$digit")"
+        mode="${mode},o-rwx"
+    else
+        mode="${mode},o=$(octal_digit_to_rwx "$digit")"
     fi
 }
 
-if [[ "$mode" =~ ^0*[0-7][0-7][0-7]$ ]]
+if [[ "$mode_raw" =~ ^0*[0-7][0-7][0-7]$ ]]
 then
+    set -x
     octal_mode_to_symbolic "$mode_raw"
 else
     mode="$mode_raw"
@@ -146,6 +149,9 @@ do
     IFS=+=- read -ra c <<< "$chg"
     who_raw="${c[0]}"
     what_raw="${c[1]}"
+    who=
+    what=
+    how=
 
     set +e
 
