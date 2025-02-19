@@ -246,7 +246,7 @@ mask_all_execute="$((PERMISSIONS_USER_EXECUTE | PERMISSIONS_GROUP_EXECUTE | PERM
 # exit 0
 
 change_mode() {
-    local mode="$2"
+    local mode="$1"
 
     for change in "${mode_change_steps[@]}"
     do
