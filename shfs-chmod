@@ -66,6 +66,24 @@ do
     esac
 done
 
+if [ -z "${filesystem:-}" ]
+then
+    eecho "${progname}: missing filesystem name"
+    exit 1
+fi
+
+if [ -z "${mode_raw:-}" ]
+then
+    eecho "${progname}: missing permissions"
+    exit 1
+fi
+
+if [ "${#files[@]}" = 0 ]
+then
+    eecho "${progname}: at least one file required"
+    exit 1
+fi
+
 octal_digit_to_rwx() {
     case "$1" in
         0) echo '';;
@@ -110,7 +128,6 @@ octal_mode_to_symbolic() {
 
 if [[ "$mode_raw" =~ ^0*[0-7][0-7][0-7]$ ]]
 then
-    set -x
     octal_mode_to_symbolic "$mode_raw"
 else
     mode="$mode_raw"
@@ -143,7 +160,7 @@ comma_join() {
     printf "%s" "$s"
 }
 
-mode_changes=()
+mode_change_steps=()
 for chg in "${changes[@]}"
 do
     IFS=+=- read -ra c <<< "$chg"
@@ -194,9 +211,25 @@ do
 
     if [ "$how" = '=' ]
     then
-        mode_changes+=("${who}-rwx")
-        mode_changes+=("${who}+${what}")
-        exp="$(printf "%s-{r,w,x} %s+%s"  "$who" "$who" "$what" )"
+        # Equals is really just removing everything not on the right hand side of the equals
+        # and always setting everything on the right hand side. So instead of always removing
+        # r, w, and x independently, we'll only remove the permissions that we truly have to.
+        # Then, we'll always set what's asked for.
+        set +e
+        to_remove=rwx
+        [[ "$what" =~ r ]] && to_remove="${to_remove//r/}"
+        [[ "$what" =~ w ]] && to_remove="${to_remove//w/}"
+        [[ "$what" =~ x ]] && to_remove="${to_remove//x/}"
+        if [ -n "$to_remove" ]
+        then
+            [ "${#to_remove}" -gt 1 ] && to_remove="{$(comma_join "$to_remove")}"
+            to_remove="$(printf "%s-%s" "$who" "$to_remove")"
+        fi
+        set -e
+
+        # mode_changes+=("${who}-rwx")
+        # mode_changes+=("${who}+${what}")
+        exp="$(printf "%s %s+%s"  "$to_remove" "$who" "$what" )"
     else
         exp="$(printf "%s%s%s" "$who" "$how" "$what")"
     fi
@@ -209,7 +242,8 @@ mask_all_read="$((PERMISSIONS_USER_READ | PERMISSIONS_GROUP_READ | PERMISSIONS_O
 mask_all_write="$((PERMISSIONS_USER_WRITE | PERMISSIONS_GROUP_WRITE | PERMISSIONS_OTHER_WRITE))"
 mask_all_execute="$((PERMISSIONS_USER_EXECUTE | PERMISSIONS_GROUP_EXECUTE | PERMISSIONS_OTHER_EXECUTE))"
 
-echo "${mode_change_steps[@]}"
+# echo "${mode_change_steps[@]}"
+# exit 0
 
 change_mode() {
     local mode="$2"
@@ -264,12 +298,14 @@ change_mode() {
     printf "%d" "$mode"
 }
 
+status=0
 for file in "${files[@]}"
 do
     inode_num="$(find_file "$filesystem" "$file")"
     if [ -z "$inode_num" ]
     then
         eecho "${progname}: no such file $file"
+        status=1
         continue
     fi
 
@@ -277,3 +313,5 @@ do
     new_permissions="$(change_mode "$current_permissions")"
     set_permissions "$filesystem" "$inode_num" "$new_permissions"
 done
+
+exit "$status"
