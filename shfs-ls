@@ -47,6 +47,18 @@ fi
 
 fill_caches "$filesystem"
 
+uid_to_name() {
+    # ok to suppress a return value here, if it's blank we'll use the uid anyway
+    local name="$(id -un -- "$1" 2>/dev/null)"
+    printf "%s" "${name:-"$1"}"
+}
+
+gid_to_name() {
+    # ok to suppress a return value here, if it's blank we'll use the uid anyway
+    local name="$(id -gn -- "$1" 2>/dev/null)"
+    printf "%s" "${name:-"$1"}"
+}
+
 ls_inode() {
     local inode_num="$1"
     
@@ -60,16 +72,21 @@ ls_inode() {
     fi
 
     # I'll tabulate this some other time
+    local owner
+    owner="$(get_file_owner "$filesystem" "$inode_num")"
+    local group
+    group="$(get_file_group "$filesystem" "$inode_num")"
     local args=(
         "$inode_num"
         "$(get_permissions "$filesystem" "$inode_num")"
-        "$(get_file_owner "$filesystem" "$inode_num")"
-        "$(get_file_group "$filesystem" "$inode_num")"
+        "$(uid_to_name "$owner")"
+        "$(gid_to_name "$group")"
         "$(get_file_length "$filesystem" "$inode_num")"
+        "$(get_last_modified_timestamp "$filesystem" "$inode_num")"
         "$(get_file_name "$filesystem" "$inode_num")"
     )
 
-    printf "%d %04o %4d %4d %4d %s\n" "${args[@]}"
+    printf "%d %04o %s %s %4d %s %s\n" "${args[@]}"
     return 0
 }
 
