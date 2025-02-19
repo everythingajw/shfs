@@ -21,6 +21,14 @@ I was inspired to write this after watching [this video on filesystems](https://
 
 I have not yet run any performance tests on this, but let's be real here. This will never be performant.
 
+## Usage
+
+There's tons of stuff you can do. I mean, what can you do with "normal" filesystem? If you can do it on a normal filesystem you can do it here (big maybe).
+
+1. Create an shfs filesystem: `shfs mkfs ./path/to/filesystem`
+2. Write to it: `shfs write ./file/on/host/filesystem name-in-shfs`
+3. Read the file back to stdout: `shfs read file-in-shfs`
+
 ## How it works
 
 Filesystem-wide metadata is stored at offset zero of the entire disk. This includes:
