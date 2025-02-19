@@ -1,0 +1,273 @@
+#!/bin/bash
+
+this_script="$(realpath -- "${BASH_SOURCE[0]}")"
+program_dir="$(dirname -- "$this_script")"
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname="shfs-mkfs"
+fi
+
+usage() {
+    cat >&2 <<EOF
+usage: $progname [options] FILESYSTEM MODE[,MODE]... FILE...
+   or: $progname [options] FILESYSTEM OCTAL-MODE FILE...
+
+Change the mode (permissions) of each FILE on FILESYSTEM.
+
+options:
+    FILESYSTEM    the filesystem to operate on
+    MODE          a "human-readable" description of the mode changes to make
+    OCTAL-MODE    set the mode exactly as described
+    FILEs         the files to operate on
+    -h, --help    print this help and exit
+
+Each MODE is of the following form:
+  [ugoa]*[-+=][rwx]+
+
+If u/g/o/a is omitted, 'a' is assumed.
+
+If using the "human-readable" mode, the last mode takes precedence if conflicting
+modes are specified. For example, if the mode specified is 'u=x,u-x', the execute
+bit for the file owner is always cleared.
+EOF
+}
+
+set -ue
+source "${program_dir}/libshfs"
+
+for arg in "$@"
+do
+    case "$arg" in
+        -h|--help) usage; exit 0;;
+        *) ;;
+    esac
+done
+
+filesystem=
+mode_raw=
+files=()
+
+for arg in "$@"
+do
+    case "$arg" in
+        -*) eecho "error: unrecognized option $arg"; exit 1;;
+        *) 
+            if [ -z "$filesystem" ]
+            then
+                filesystem="$arg"
+            elif [ -z "$mode" ]
+            then
+                mode="$arg"
+            else
+                files+=("$arg")
+            fi
+            ;;
+    esac
+done
+
+octal_digit_to_rwx() {
+    case "$1" in
+        0) echo '';;
+        1) echo 'x';;
+        2) echo 'w';;
+        3) echo 'wx';;
+        4) echo 'r';;
+        5) echo 'rx';;
+        6) echo 'rw';;
+        7) echo 'rwx';;
+    esac
+}
+
+octal_mode_to_symbolic() {
+    local octal="${1//0/}"
+    octal="$(printf '%3d' "${octal}")"
+
+    local sep=''
+    local digit="${octal:0:1}"
+
+    if [ "$digit" != '0' ]
+    then
+        mode="u=$(octal_digit_to_rwx "$digit")"
+        sep=,
+    fi
+
+    digit="${digit:1:1}"
+    if [ "$digit" != '0' ]
+    then
+        mode="${mode}${sep}g=$(octal_digit_to_rwx "$digit")"
+        sep=,
+    fi
+
+    digit="${digit:2:1}"
+    if [ "$digit" != '0' ]
+    then
+        mode="${mode}${sep}o=$(octal_digit_to_rwx "$digit")"
+    fi
+}
+
+if [[ "$mode" =~ ^0*[0-7][0-7][0-7]$ ]]
+then
+    octal_mode_to_symbolic "$mode_raw"
+else
+    mode="$mode_raw"
+fi
+
+# mode="ugoa+rwx,ugoa=rwx,ugoa-rwx,ugo+w,a-w,u+w,g-r"  # "$2"
+# echo "$mode"
+IFS=, read -ra changes <<< "${mode}"
+
+for chg in "${changes[@]}"
+do
+    # trim
+    chg="$(echo "$chg" | xargs)"
+    if ! [[ "$chg" =~ ^[ugoa]*[=+-][rwx]+$ ]]
+    then
+        eecho "${progname}: invalid mode change $chg"
+        exit 1
+    fi
+done
+
+comma_join() {
+    local str="$1"
+    local s="${str:0:1}"
+    local i=1
+    while [ "$i" -lt "${#str}" ]
+    do
+        s="${s},${str:$i:1}"
+        i="$((i + 1))"
+    done
+    printf "%s" "$s"
+}
+
+mode_changes=()
+for chg in "${changes[@]}"
+do
+    IFS=+=- read -ra c <<< "$chg"
+    who_raw="${c[0]}"
+    what_raw="${c[1]}"
+
+    set +e
+
+    # Collapse multiple instances of the same letter down to one and turn ugo into a
+    if [ -z "$who_raw" ] || [[ "$who_raw" =~ a ]]
+    then
+        who=a
+    else
+        [[ "$who_raw" =~ u ]] && who=u
+        [[ "$who_raw" =~ g ]] && who="${who}g"
+        [[ "$who_raw" =~ o ]] && who="${who}o"
+        [ "$who" = ugo ] && who=a
+    fi
+
+    # Collapse multiple instances of the same permission down to one
+    [[ "$what_raw" =~ r ]] && what=r
+    [[ "$what_raw" =~ w ]] && what="${what}w"
+    [[ "$what_raw" =~ x ]] && what="${what}x"
+
+    set -e
+
+    case "$chg" in
+        *-*) how='-';;
+        *+*) how='+';;
+        *)   how='=';;
+    esac
+
+    # If setting permissions exactly, then clear everything and only set what should be set.
+    who="$(comma_join "$who")"
+    if [ "${#who}" -gt 1 ]
+    then
+        who="{${who}}"
+    fi
+
+    what="$(comma_join "$what")"
+    if [ "${#what}" -gt 1 ]
+    then
+        what="{${what}}"
+    fi
+
+    if [ "$how" = '=' ]
+    then
+        mode_changes+=("${who}-rwx")
+        mode_changes+=("${who}+${what}")
+        exp="$(printf "%s-{r,w,x} %s+%s"  "$who" "$who" "$what" )"
+    else
+        exp="$(printf "%s%s%s" "$who" "$how" "$what")"
+    fi
+
+    read -ra changeset <<< "$(eval echo "$exp")"
+    mode_change_steps+=("${changeset[@]}")
+done
+
+mask_all_read="$((PERMISSIONS_USER_READ | PERMISSIONS_GROUP_READ | PERMISSIONS_OTHER_READ))"
+mask_all_write="$((PERMISSIONS_USER_WRITE | PERMISSIONS_GROUP_WRITE | PERMISSIONS_OTHER_WRITE))"
+mask_all_execute="$((PERMISSIONS_USER_EXECUTE | PERMISSIONS_GROUP_EXECUTE | PERMISSIONS_OTHER_EXECUTE))"
+
+echo "${mode_change_steps[@]}"
+
+change_mode() {
+    local mode="$2"
+
+    for change in "${mode_change_steps[@]}"
+    do
+        local whom="${change:0:1}"
+        local how="${change:1:1}"
+        local what="${change:2:1}"
+
+        local mask_r
+        local mask_w
+        local mask_x
+
+        case "$whom" in
+            u)
+                mask_r="$PERMISSIONS_USER_READ"
+                mask_w="$PERMISSIONS_USER_WRITE"
+                mask_x="$PERMISSIONS_USER_EXECUTE"
+                ;;
+            g)
+                mask_r="$PERMISSIONS_GROUP_READ"
+                mask_w="$PERMISSIONS_GROUP_WRITE"
+                mask_x="$PERMISSIONS_GROUP_EXECUTE"
+                ;;
+            o)
+                mask_r="$PERMISSIONS_OTHER_READ"
+                mask_w="$PERMISSIONS_OTHER_WRITE"
+                mask_x="$PERMISSIONS_OTHER_EXECUTE"
+                ;;
+            a)
+                mask_r="$mask_all_read"
+                mask_w="$mask_all_write"
+                mask_x="$mask_all_execute"
+                ;;
+        esac
+
+        local mask
+
+        case "$what" in
+            r) mask="$mask_r";;
+            w) mask="$mask_w";;
+            x) mask="$mask_x";;
+        esac 
+
+        case "$how" in
+            +) mode="$((mode | mask))";;
+            -) mode="$((mode & (~ mask)))";;
+        esac
+    done
+
+    printf "%d" "$mode"
+}
+
+for file in "${files[@]}"
+do
+    inode_num="$(find_file "$filesystem" "$file")"
+    if [ -z "$inode_num" ]
+    then
+        eecho "${progname}: no such file $file"
+        continue
+    fi
+
+    current_permissions="$(get_permissions "$filesystem" "$inode_num")"
+    new_permissions="$(change_mode "$current_permissions")"
+    set_permissions "$filesystem" "$inode_num" "$new_permissions"
+done
