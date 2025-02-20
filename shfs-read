@@ -69,8 +69,14 @@ do
     file_data_block_start="$(get_data_start_for_inode "$filesystem" "$inode_num")"
 
     # We have the length of the file here in every case, so we can be a little more efficient here
-    # by reading more than 1 byte at a time.
+    # by reading more than 1 byte at a time. But we also can't read more than the file block size or
+    # we'll read more than we should. So we have to cap at whatever the file block size is.
     read_block_size=2048
+    file_block_size="$(get_file_block_size "$filesystem")"
+    if [ "$file_block_size" -lt "$read_block_size" ]
+    then
+        read_block_size="$file_block_size"
+    fi
     full_blocks_to_read="$((length / read_block_size))"
     remaining="$((length % read_block_size))"
 
