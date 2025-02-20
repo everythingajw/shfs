@@ -742,3 +742,17 @@ fill_caches() {
     get_file_block_size "$filesystem" &> /dev/null
 }
 export -f fill_caches
+
+uid_to_name() {
+    # ok to suppress a return value here, if it's blank we'll use the uid anyway
+    local name="$(id -un -- "$1" 2>/dev/null)"
+    printf "%s" "${name:-"$1"}"
+}
+export -f uid_to_name
+
+gid_to_name() {
+    # ok to suppress a return value here, if it's blank we'll use the uid anyway
+    local name="$(id -gn -- "$1" 2>/dev/null)"
+    printf "%s" "${name:-"$1"}"
+}
+export -f gid_to_name

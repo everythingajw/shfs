@@ -1,0 +1,92 @@
+#!/bin/bash
+
+this_script="$(realpath -- "${BASH_SOURCE[0]}")"
+program_dir="$(dirname -- "$this_script")"
+progname="$(basename -- "${BASH_SOURCE[0]}")"
+if [ -z "$progname" ]
+then
+    progname='shfs-stat'
+fi
+
+usage() {
+    cat >&2 <<EOF
+usage: $progname [options] FILESYSTEM FILE...
+
+Print metadata about the given FILEs on FILESYSTEM, like stat(1).
+
+options:
+    -h, --help      print this help and exit
+EOF
+}
+
+source "${program_dir}/libshfs"
+
+for arg in "$@"
+do
+    case "$arg" in
+        -h|--help) usage; exit 0;;
+        *) ;;
+    esac
+done
+
+for arg in "$@"
+do
+    case "$arg" in
+        -*) eecho "${progname}: unrecognized option $arg"; exit 1;;
+        *) ;;
+    esac
+done
+
+if [ "$#" -lt 2 ]
+then
+    eecho "${progname}: expected filesystem path and at least one file"
+    exit 1
+fi
+
+filesystem="$1"
+shift
+
+printed_anything=f
+
+stat_file() {
+    local owner
+    owner="$(get_file_owner "$filesystem" "$inode_num")"
+    local group
+    group="$(get_file_group "$filesystem" "$inode_num")"
+
+    local args=(
+        "$inode_num"
+        "$(get_permissions "$filesystem" "$inode_num")"
+        "$(uid_to_name "$owner")"
+        "$owner"
+        "$(gid_to_name "$group")"
+        "$group"
+        "$(get_file_length "$filesystem" "$inode_num")"
+        "$(get_last_modified_timestamp "$filesystem" "$inode_num")"
+        "$(get_file_name "$filesystem" "$inode_num")"
+    )
+
+    printf 'inode: %s\npermissions: %04o\nowner: %s (%s)\ngroup: %s (%s)\nsize: %s\nlast modified: %s\nname: %s\n' "${args[@]}"
+    printed_anything=t
+}
+
+status=0
+while [ "$#" -gt 0 ]
+do
+    inode_num="$(find_file "$filesystem" "$1")"
+    if [ -z "$inode_num" ]
+    then
+        eecho "${progname}: no such file $1"
+        status=1
+    else
+        if [ "$printed_anything" = t ]
+        then
+            printf '\n'
+        fi
+        stat_file
+    fi
+
+    shift
+done
+
+exit "$status"

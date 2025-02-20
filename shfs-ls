@@ -47,18 +47,6 @@ fi
 
 fill_caches "$filesystem"
 
-uid_to_name() {
-    # ok to suppress a return value here, if it's blank we'll use the uid anyway
-    local name="$(id -un -- "$1" 2>/dev/null)"
-    printf "%s" "${name:-"$1"}"
-}
-
-gid_to_name() {
-    # ok to suppress a return value here, if it's blank we'll use the uid anyway
-    local name="$(id -gn -- "$1" 2>/dev/null)"
-    printf "%s" "${name:-"$1"}"
-}
-
 ls_inode() {
     local inode_num="$1"
     
