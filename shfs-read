@@ -81,7 +81,7 @@ do
         # The remaining data (if there is any) starts after the last block read. Integer division
         # happened above so this not just a simple "undoing" of the division.
         offset_of_remaining="$(( file_data_block_start + (full_blocks_to_read * read_block_size) ))"
-        qdd if="$filesystem" bs=1 count="$remaining" skip="$offset_of_remaining" conv=notrunc
+        qdd if="$filesystem" bs="$remaining" count=1 skip="${offset_of_remaining}B" conv=notrunc
     fi
 
     shift
