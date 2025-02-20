@@ -238,10 +238,6 @@ do
     mode_change_steps+=("${changeset[@]}")
 done
 
-mask_all_read="$((PERMISSIONS_USER_READ | PERMISSIONS_GROUP_READ | PERMISSIONS_OTHER_READ))"
-mask_all_write="$((PERMISSIONS_USER_WRITE | PERMISSIONS_GROUP_WRITE | PERMISSIONS_OTHER_WRITE))"
-mask_all_execute="$((PERMISSIONS_USER_EXECUTE | PERMISSIONS_GROUP_EXECUTE | PERMISSIONS_OTHER_EXECUTE))"
-
 # echo "${mode_change_steps[@]}"
 # exit 0
 
@@ -275,9 +271,9 @@ change_mode() {
                 mask_x="$PERMISSIONS_OTHER_EXECUTE"
                 ;;
             a)
-                mask_r="$mask_all_read"
-                mask_w="$mask_all_write"
-                mask_x="$mask_all_execute"
+                mask_r="$PERMISSIONS_ALL_READ"
+                mask_w="$PERMISSIONS_ALL_WRITE"
+                mask_x="$PERMISSIONS_ALL_EXECUTE"
                 ;;
         esac
 

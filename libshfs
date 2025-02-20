@@ -50,6 +50,10 @@ export FILE_BLOCK_SIZE=2048
 
 export FIRST_INODE_NUMBER=1
 
+export MINIMUM_NUM_INODES=1
+MAXIMUM_NUM_INODES="$(eval echo '$((1 << FILESYSTEM_HEADER_NUM_INODES_SIZE))')"
+export MAXIMUM_NUM_INODES
+
 # The datetime/timestamp format the filesystem uses.
 # Normally, we'd just store this as a Unix timestamp, but I have found great difficulty in
 # reliably retrieving and converting 64-bit integers in bash and with standard (well, standard
@@ -60,13 +64,13 @@ export FIRST_INODE_NUMBER=1
 #   Stored as: 1970-01-03T15:16:17+05:30
 export DATETIME_FORMAT='%Y-%m-%dT%H:%M:%S%:z'
 
-# - 2 byte unsigned inode number
-# - 2 byte unsigned permissions (read, write, execute for user, group, other)
-# - 4 byte unsigned user id
-# - 4 byte unsigned group id
-# - 2 byte unsigned file length
-# - 7 byte signed last modification time
-# - 256 byte file name
+export MINIMUM_UID=0
+MAXIMUM_UID="$(eval echo '$(( (1 << 32) - 1 ))')"
+export MAXIMUM_UID
+
+export MINIMUM_GID=0
+MAXIMUM_GID="$(eval echo '$(( (1 << 32) - 1 ))')"
+export MAXIMUM_GID
 
 export PERMISSIONS_USER_READ="$((0400))"
 export PERMISSIONS_USER_WRITE="$((0200))"
@@ -79,6 +83,10 @@ export PERMISSIONS_GROUP_EXECUTE="$((010))"
 export PERMISSIONS_OTHER_READ="$((04))"
 export PERMISSIONS_OTHER_WRITE="$((02))"
 export PERMISSIONS_OTHER_EXECUTE="$((01))"
+
+export PERMISSIONS_ALL_READ="$((PERMISSIONS_USER_READ | PERMISSIONS_GROUP_READ | PERMISSIONS_OTHER_READ))"
+export PERMISSIONS_ALL_WRITE="$((PERMISSIONS_USER_WRITE | PERMISSIONS_GROUP_WRITE | PERMISSIONS_OTHER_WRITE))"
+export PERMISSIONS_ALL_EXECUTE="$((PERMISSIONS_USER_EXECUTE | PERMISSIONS_GROUP_EXECUTE | PERMISSIONS_OTHER_EXECUTE))"
 
 eecho() {
     echo "$@" >&2
@@ -532,7 +540,7 @@ set_file_owner() {
         uid="$(id -u)"
     fi
 
-    if [ "$uid" -lt 0 ] || [ "$uid" -gt "$(echo '(2^32)-1' | bc)" ]
+    if [ "$uid" -lt "$MINIMUM_UID" ] || [ "$uid" -gt "$MAXIMUM_UID" ]
     then
         return 1
     fi
@@ -578,7 +586,7 @@ set_file_group() {
         gid="$(id -g)"
     fi
 
-    if [ "$gid" -lt 0 ] || [ "$gid" -gt "$(echo '(2^32)-1' | bc)" ]
+    if [ "$gid" -lt "$MINIMUM_GID" ] || [ "$gid" -gt "$MAXIMUM_GID" ]
     then
         return 1
     fi

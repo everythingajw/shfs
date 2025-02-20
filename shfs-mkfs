@@ -16,7 +16,7 @@ Create a new shfs at FILE.
 
 Options:
     -h, --help                  Print this usage and exit
-    -i, --inodes INODES         Set the number of inodes (default 100, max 65535)
+    -i, --inodes INODES         Set the number of inodes (default 100, max $MAXIMUM_NUM_INODES)
     -b, --file-block-size SIZE  Set the block size in bytes for files (default 2048, max $MAXIMUM_FILE_BLOCK_SIZE)
     --allocate-now              Actually allocate all disk space now instead of using a sparse file
 EOF
@@ -72,15 +72,15 @@ do
     shift
 done
 
-if [ "$num_inodes" -le 0 ]
+if [ "$num_inodes" -lt "$MINIMUM_NUM_INODES" ]
 then
     eecho "error: must have at least 1 inode"
     exit 1
 fi
 
-if [ "$num_inodes" -gt 65535 ]
+if [ "$num_inodes" -gt "$MAXIMUM_NUM_INODES" ]
 then
-    eecho "error: too many inodes (maximum 65535)"
+    eecho "error: too many inodes (maximum $MAXIMUM_NUM_INODES)"
     exit 1
 fi
 
